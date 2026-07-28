@@ -10,6 +10,7 @@ enum TabBarIconNameEnum {
   history,
   download,
   setting,
+  aiCenter,
 }
 
 class TabBarIcon {

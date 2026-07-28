@@ -52,6 +52,11 @@ class SettingPage extends StatelessWidget {
               onTap: () => toRoute(Routes.settingPrefix + 'preference'),
             ),
             ListTile(
+              leading: const Icon(Icons.auto_awesome),
+              title: Text('aiCenter'.tr),
+              onTap: () => toRoute(Routes.aiCenter),
+            ),
+            ListTile(
               leading: const Icon(Icons.wifi),
               title: Text('network'.tr),
               onTap: () => toRoute(Routes.settingPrefix + 'network'),

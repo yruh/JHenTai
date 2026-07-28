@@ -4,6 +4,7 @@ import 'package:flutter/services.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:get/get.dart';
 import 'package:jhentai/src/l18n/locale_text.dart';
+import 'package:jhentai/src/network/ai_request.dart';
 import 'package:jhentai/src/network/eh_request.dart';
 import 'package:jhentai/src/network/jh_request.dart';
 import 'package:jhentai/src/routes/getx_router_observer.dart';
@@ -33,6 +34,7 @@ import 'package:jhentai/src/service/tag_translation_service.dart';
 import 'package:jhentai/src/service/volume_service.dart';
 import 'package:jhentai/src/service/windows_service.dart';
 import 'package:jhentai/src/setting/advanced_setting.dart';
+import 'package:jhentai/src/setting/ai_setting.dart';
 import 'package:jhentai/src/setting/archive_bot_setting.dart';
 import 'package:jhentai/src/setting/download_setting.dart';
 import 'package:jhentai/src/setting/eh_setting.dart';
@@ -56,6 +58,7 @@ import 'network/archive_bot_request.dart';
 
 List<JHLifeCircleBean> lifeCircleBeans = [
   ehRequest,
+  aiRequest,
   jhRequest,
   archiveBotRequest,
   appUpdateService,
@@ -81,6 +84,7 @@ List<JHLifeCircleBean> lifeCircleBeans = [
   volumeService,
   windowService,
   advancedSetting,
+  aiSetting,
   downloadSetting,
   archiveBotSetting,
   ehSetting,

@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:get/get.dart';
 import 'package:jhentai/src/extension/list_extension.dart';
+import 'package:jhentai/src/pages/ai_center/ai_center_page.dart';
 import 'package:jhentai/src/pages/download/download_base_page.dart';
 import 'package:jhentai/src/pages/gallerys/simple/gallerys_page_logic.dart';
 import 'package:jhentai/src/pages/history/history_page.dart';
@@ -80,6 +81,14 @@ class DesktopLayoutPageState with DoubleTapToRefreshStateMixin {
         unselectedIcon: const Icon(Icons.favorite_outline),
         page: () => const FavoritePage(),
         scrollController: () => Get.find<FavoritePageLogic>().state.scrollController,
+        shouldRender: false,
+      ),
+      TabBarIcon(
+        name: TabBarIconNameEnum.aiCenter,
+        routeName: Routes.aiCenter,
+        selectedIcon: const Icon(Icons.auto_awesome),
+        unselectedIcon: const Icon(Icons.auto_awesome_outlined),
+        page: () => AiCenterPage(),
         shouldRender: false,
       ),
       TabBarIcon(

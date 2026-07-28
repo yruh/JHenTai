@@ -20,6 +20,7 @@ enum ConfigEnum {
   styleSetting('styleSetting'),
   superResolutionSetting('SuperResolutionSetting'),
   userSetting('userSetting'),
+  aiSetting('aiSetting'),
   archiveBotSetting('archiveBotSetting'),
   keyboardShortcutSetting('keyboardShortcutSetting'),
   downloadSearchPageType('downloadSearchPageType'),
@@ -39,6 +40,7 @@ enum ConfigEnum {
   searchHistory('searchHistory'),
   myTagsSetting('MyTagsSetting'),
   builtInBlockedUser('builtInBlockedUser'),
+  aiXpProfile('aiXpProfile'),
 
   /// page config
   downloadPageBodyType('downloadPageGalleryType'),

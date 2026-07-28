@@ -9,6 +9,7 @@ import '../../../mixin/double_tap_to_refresh_state_mixin.dart';
 import '../../../model/tab_bar_icon.dart';
 import '../../../routes/routes.dart';
 import '../../../setting/preference_setting.dart';
+import '../../ai_center/ai_center_page.dart';
 import '../../download/download_base_page.dart';
 import '../../favorite/favorite_page.dart';
 import '../../favorite/favorite_page_logic.dart';
@@ -84,6 +85,14 @@ class MobileLayoutPageV2State with DoubleTapToRefreshStateMixin {
         unselectedIcon: const Icon(Icons.favorite_outline),
         page: () => FavoritePage(showMenuButton: true, showTitle: true, name: 'favorite'.tr),
         scrollController: () => Get.find<FavoritePageLogic>().scroll2TopState.scrollController,
+        shouldRender: false,
+      ),
+      TabBarIcon(
+        name: TabBarIconNameEnum.aiCenter,
+        routeName: Routes.aiCenter,
+        selectedIcon: const Icon(Icons.auto_awesome),
+        unselectedIcon: const Icon(Icons.auto_awesome_outlined),
+        page: () => AiCenterPage(showMenuButton: true),
         shouldRender: false,
       ),
       TabBarIcon(

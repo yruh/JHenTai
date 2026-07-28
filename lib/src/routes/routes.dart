@@ -1,5 +1,6 @@
 import 'package:get/get.dart';
 import 'package:jhentai/src/extension/widget_extension.dart';
+import 'package:jhentai/src/pages/ai_center/ai_center_page.dart';
 import 'package:jhentai/src/pages/details/details_page.dart';
 import 'package:jhentai/src/pages/details/thumbnails/thumbnails_page.dart';
 import 'package:jhentai/src/pages/download/download_base_page.dart';
@@ -77,6 +78,7 @@ class Routes {
   static const String history = "/history";
   static const String download = "/download";
   static const String setting = "/setting";
+  static const String aiCenter = "/ai_center";
   static const String desktopSearch = "/desktop_search";
   static const String mobileV2Search = "/mobile_v2_search";
   static const String downloadSearch = "/download_search";
@@ -205,6 +207,12 @@ class Routes {
     EHPage(
       name: favorite,
       page: () => const FavoritePage(),
+      transition: defaultTransition,
+      side: Side.left,
+    ),
+    EHPage(
+      name: aiCenter,
+      page: () => AiCenterPage(),
       transition: defaultTransition,
       side: Side.left,
     ),
