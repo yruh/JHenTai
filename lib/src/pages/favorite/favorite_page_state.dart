@@ -9,4 +9,7 @@ class FavoritePageState extends BasePageState {
 
   @override
   SearchConfig searchConfig = SearchConfig(searchType: SearchType.favorite);
+
+  /// True while a batch torrent / dedupe operation is running.
+  bool batchOperationRunning = false;
 }

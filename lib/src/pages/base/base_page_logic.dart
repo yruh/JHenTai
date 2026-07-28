@@ -19,6 +19,8 @@ import '../../exception/eh_site_exception.dart';
 import '../../mixin/scroll_to_top_logic_mixin.dart';
 import '../../mixin/scroll_to_top_state_mixin.dart';
 import '../../model/gallery.dart';
+import '../../model/gallery_count.dart';
+import '../../model/gallery_metadata.dart';
 import '../../network/eh_request.dart';
 import '../../routes/routes.dart';
 import '../../service/local_block_rule_service.dart';
@@ -93,6 +95,7 @@ abstract class BasePageLogic extends GetxController with Scroll2TopLogicMixin {
 
   /// not clear current data before refresh
   /// [updateId] is for subclass to override
+  /// Continues through following cursors when a page is fully filtered out.
   Future<void> handleRefresh({String? updateId}) async {
     if (state.refreshState == LoadingState.loading) {
       return;
@@ -101,41 +104,80 @@ abstract class BasePageLogic extends GetxController with Scroll2TopLogicMixin {
     state.refreshState = LoadingState.loading;
     updateSafely([refreshStateId]);
 
-    GalleryPageInfo galleryPage;
-    try {
-      galleryPage = await getGalleryPage();
-    } on DioException catch (e) {
-      log.error('refreshGalleryFailed'.tr, e.errorMsg);
-      snack('refreshGalleryFailed'.tr, e.errorMsg ?? '', isShort: true);
-      state.refreshState = LoadingState.error;
-      updateSafely([refreshStateId]);
-      return;
-    } on EHSiteException catch (e) {
-      log.error('refreshGalleryFailed'.tr, e.message);
-      snack(
-        'refreshGalleryFailed'.tr,
-        e.message,
-        isShort: true,
-        onPressed: e.referLink == null ? null : () => launchUrlString(e.referLink!, mode: LaunchMode.externalApplication),
-      );
-      state.refreshState = LoadingState.error;
-      updateSafely([refreshStateId]);
-      return;
-    } catch (e) {
-      log.error('refreshGalleryFailed'.tr, e.toString());
-      snack('refreshGalleryFailed'.tr, e.toString(), isShort: true);
-      state.refreshState = LoadingState.error;
-      updateSafely([refreshStateId]);
-      return;
+    final Set<String> visitedCursors = {};
+    String? cursor;
+    List<Gallery> gallerys = [];
+    String? prevGid;
+    String? nextGid;
+    GalleryCount? totalCount;
+    FavoriteSortOrder? favoriteSortOrder;
+
+    while (true) {
+      final String cursorKey = cursor ?? '';
+      if (!visitedCursors.add(cursorKey)) {
+        log.warning('handleRefresh detected pagination cursor loop at "$cursor", stop loading');
+        /// Terminate pagination so the same cursor is not left retryable forever.
+        nextGid = null;
+        break;
+      }
+
+      GalleryPageInfo galleryPage;
+      try {
+        galleryPage = await getGalleryPage(nextGid: cursor);
+      } on DioException catch (e) {
+        log.error('refreshGalleryFailed'.tr, e.errorMsg);
+        snack('refreshGalleryFailed'.tr, e.errorMsg ?? '', isShort: true);
+        state.refreshState = LoadingState.error;
+        updateSafely([refreshStateId]);
+        return;
+      } on EHSiteException catch (e) {
+        log.error('refreshGalleryFailed'.tr, e.message);
+        snack(
+          'refreshGalleryFailed'.tr,
+          e.message,
+          isShort: true,
+          onPressed: e.referLink == null ? null : () => launchUrlString(e.referLink!, mode: LaunchMode.externalApplication),
+        );
+        state.refreshState = LoadingState.error;
+        updateSafely([refreshStateId]);
+        return;
+      } catch (e) {
+        log.error('refreshGalleryFailed'.tr, e.toString());
+        snack('refreshGalleryFailed'.tr, e.toString(), isShort: true);
+        state.refreshState = LoadingState.error;
+        updateSafely([refreshStateId]);
+        return;
+      }
+
+      /// Only the first page establishes prevGid (start of the refreshed window).
+      if (cursor == null) {
+        prevGid = galleryPage.prevGid;
+      }
+      nextGid = galleryPage.nextGid;
+      totalCount = galleryPage.totalCount;
+      favoriteSortOrder = galleryPage.favoriteSortOrder;
+
+      gallerys = await postHandleNewGallerys(galleryPage.gallerys, cleanDuplicate: false);
+
+      if (gallerys.isNotEmpty || galleryPage.nextGid == null) {
+        break;
+      }
+
+      /// Next cursor already seen -> terminate rather than re-fetching forever.
+      if (visitedCursors.contains(galleryPage.nextGid)) {
+        log.warning('handleRefresh detected pagination cursor loop at "${galleryPage.nextGid}", stop loading');
+        nextGid = null;
+        break;
+      }
+
+      cursor = galleryPage.nextGid;
     }
 
-    List<Gallery> gallerys = await postHandleNewGallerys(galleryPage.gallerys, cleanDuplicate: false);
-
     state.gallerys = gallerys;
-    state.totalCount = galleryPage.totalCount;
-    state.prevGid = galleryPage.prevGid;
-    state.nextGid = galleryPage.nextGid;
-    state.favoriteSortOrder = galleryPage.favoriteSortOrder;
+    state.totalCount = totalCount;
+    state.prevGid = prevGid;
+    state.nextGid = nextGid;
+    state.favoriteSortOrder = favoriteSortOrder;
     state.galleryCollectionKey = Key(newUUID());
 
     state.refreshState = LoadingState.idle;
@@ -228,6 +270,7 @@ abstract class BasePageLogic extends GetxController with Scroll2TopLogicMixin {
   }
 
   /// has scrolled to bottom, so need to load more data.
+  /// Continues through following cursors when a page is fully filtered out.
   Future<void> loadMore({bool checkLoadingState = true}) async {
     if (checkLoadingState && state.loadingState == LoadingState.loading) {
       return;
@@ -236,40 +279,69 @@ abstract class BasePageLogic extends GetxController with Scroll2TopLogicMixin {
     state.loadingState = LoadingState.loading;
     updateSafely([loadingStateId]);
 
-    GalleryPageInfo galleryPage;
-    try {
-      galleryPage = await getGalleryPage(nextGid: state.nextGid);
-    } on DioException catch (e) {
-      log.error('getGallerysFailed'.tr, e.errorMsg);
-      snack('getGallerysFailed'.tr, e.errorMsg ?? '', isShort: true);
-      state.loadingState = LoadingState.error;
-      updateSafely([loadingStateId]);
-      return;
-    } on EHSiteException catch (e) {
-      log.error('getGallerysFailed'.tr, e.message);
-      snack(
-        'getGallerysFailed'.tr,
-        e.message,
-        isShort: true,
-        onPressed: e.referLink == null ? null : () => launchUrlString(e.referLink!, mode: LaunchMode.externalApplication),
-      );
-      state.loadingState = LoadingState.error;
-      updateSafely([loadingStateId]);
-      return;
-    } catch (e) {
-      log.error('getGallerysFailed'.tr, e.toString());
-      snack('getGallerysFailed'.tr, e.toString(), isShort: true);
-      state.loadingState = LoadingState.error;
-      updateSafely([loadingStateId]);
-      return;
+    final Set<String> visitedCursors = {};
+    String? cursor = state.nextGid;
+    List<Gallery> gallerys = [];
+
+    while (true) {
+      final String cursorKey = cursor ?? '';
+      if (!visitedCursors.add(cursorKey)) {
+        log.warning('loadMore detected pagination cursor loop at "$cursor", stop loading');
+        /// Terminate pagination so the same cursor is not left retryable forever.
+        state.nextGid = null;
+        break;
+      }
+
+      GalleryPageInfo galleryPage;
+      try {
+        galleryPage = await getGalleryPage(nextGid: cursor);
+      } on DioException catch (e) {
+        log.error('getGallerysFailed'.tr, e.errorMsg);
+        snack('getGallerysFailed'.tr, e.errorMsg ?? '', isShort: true);
+        state.loadingState = LoadingState.error;
+        updateSafely([loadingStateId]);
+        return;
+      } on EHSiteException catch (e) {
+        log.error('getGallerysFailed'.tr, e.message);
+        snack(
+          'getGallerysFailed'.tr,
+          e.message,
+          isShort: true,
+          onPressed: e.referLink == null ? null : () => launchUrlString(e.referLink!, mode: LaunchMode.externalApplication),
+        );
+        state.loadingState = LoadingState.error;
+        updateSafely([loadingStateId]);
+        return;
+      } catch (e) {
+        log.error('getGallerysFailed'.tr, e.toString());
+        snack('getGallerysFailed'.tr, e.toString(), isShort: true);
+        state.loadingState = LoadingState.error;
+        updateSafely([loadingStateId]);
+        return;
+      }
+
+      gallerys = await postHandleNewGallerys(galleryPage.gallerys);
+
+      state.totalCount = galleryPage.totalCount;
+      state.nextGid = galleryPage.nextGid;
+      state.favoriteSortOrder = galleryPage.favoriteSortOrder;
+
+      if (gallerys.isNotEmpty || galleryPage.nextGid == null) {
+        break;
+      }
+
+      /// Next cursor already seen -> terminate rather than re-fetching forever.
+      if (visitedCursors.contains(galleryPage.nextGid)) {
+        log.warning('loadMore detected pagination cursor loop at "${galleryPage.nextGid}", stop loading');
+        state.nextGid = null;
+        break;
+      }
+
+      /// Page fully filtered out - advance to the next cursor.
+      cursor = galleryPage.nextGid;
     }
 
-    List<Gallery> gallerys = await postHandleNewGallerys(galleryPage.gallerys);
-
     state.gallerys.addAll(gallerys);
-    state.totalCount = galleryPage.totalCount;
-    state.nextGid = galleryPage.nextGid;
-    state.favoriteSortOrder = galleryPage.favoriteSortOrder;
 
     if (state.nextGid == null && state.prevGid == null && state.gallerys.isEmpty) {
       state.loadingState = LoadingState.noData;
@@ -282,6 +354,8 @@ abstract class BasePageLogic extends GetxController with Scroll2TopLogicMixin {
     updateSafely();
   }
 
+  /// Jump to [dateTime], then continue forward through nextGid when the landed
+  /// page is fully removed by client filters (same cursor-loop guard as loadMore).
   Future<void> jumpPage(DateTime dateTime) async {
     if (state.loadingState == LoadingState.loading) {
       return;
@@ -295,40 +369,87 @@ abstract class BasePageLogic extends GetxController with Scroll2TopLogicMixin {
 
     state.scrollController.jumpTo(0);
 
-    GalleryPageInfo galleryPage;
-    try {
-      galleryPage = await getGalleryPage(nextGid: state.nextGid, prevGid: state.prevGid, seek: dateTime);
-    } on DioException catch (e) {
-      log.error('getGallerysFailed'.tr, e.errorMsg);
-      snack('getGallerysFailed'.tr, e.errorMsg ?? '', isShort: true);
-      state.loadingState = LoadingState.error;
-      updateSafely([loadingStateId]);
-      return;
-    } on EHSiteException catch (e) {
-      log.error('getGallerysFailed'.tr, e.message);
-      snack(
-        'getGallerysFailed'.tr,
-        e.message,
-        isShort: true,
-        onPressed: e.referLink == null ? null : () => launchUrlString(e.referLink!, mode: LaunchMode.externalApplication),
-      );
-      state.loadingState = LoadingState.error;
-      updateSafely([loadingStateId]);
-      return;
-    } catch (e) {
-      log.error('getGallerysFailed'.tr, e.toString());
-      snack('getGallerysFailed'.tr, e.toString(), isShort: true);
-      updateSafely([loadingStateId]);
-      return;
+    final Set<String> visitedCursors = {};
+    /// First request keeps original jump semantics (current window + seek).
+    String? cursor = state.nextGid;
+    String? jumpPrevGid = state.prevGid;
+    DateTime? seek = dateTime;
+    List<Gallery> gallerys = [];
+    String? prevGid;
+    String? nextGid;
+    GalleryCount? totalCount;
+    FavoriteSortOrder? favoriteSortOrder;
+
+    while (true) {
+      final String cursorKey = cursor ?? '';
+      if (!visitedCursors.add(cursorKey)) {
+        log.warning('jumpPage detected pagination cursor loop at "$cursor", stop loading');
+        /// Terminate pagination so the same cursor is not left retryable forever.
+        nextGid = null;
+        break;
+      }
+
+      GalleryPageInfo galleryPage;
+      try {
+        galleryPage = await getGalleryPage(nextGid: cursor, prevGid: jumpPrevGid, seek: seek);
+      } on DioException catch (e) {
+        log.error('getGallerysFailed'.tr, e.errorMsg);
+        snack('getGallerysFailed'.tr, e.errorMsg ?? '', isShort: true);
+        state.loadingState = LoadingState.error;
+        updateSafely([loadingStateId]);
+        return;
+      } on EHSiteException catch (e) {
+        log.error('getGallerysFailed'.tr, e.message);
+        snack(
+          'getGallerysFailed'.tr,
+          e.message,
+          isShort: true,
+          onPressed: e.referLink == null ? null : () => launchUrlString(e.referLink!, mode: LaunchMode.externalApplication),
+        );
+        state.loadingState = LoadingState.error;
+        updateSafely([loadingStateId]);
+        return;
+      } catch (e) {
+        log.error('getGallerysFailed'.tr, e.toString());
+        snack('getGallerysFailed'.tr, e.toString(), isShort: true);
+        state.loadingState = LoadingState.error;
+        updateSafely([loadingStateId]);
+        return;
+      }
+
+      /// Only the first (seek) page establishes prevGid for the jumped window.
+      if (seek != null) {
+        prevGid = galleryPage.prevGid;
+      }
+      nextGid = galleryPage.nextGid;
+      totalCount = galleryPage.totalCount;
+      favoriteSortOrder = galleryPage.favoriteSortOrder;
+
+      /// Subsequent pages paginate forward by nextGid only (no re-seek).
+      jumpPrevGid = null;
+      seek = null;
+
+      gallerys = await postHandleNewGallerys(galleryPage.gallerys, cleanDuplicate: false);
+
+      if (gallerys.isNotEmpty || galleryPage.nextGid == null) {
+        break;
+      }
+
+      /// Next cursor already seen -> terminate rather than re-fetching forever.
+      if (visitedCursors.contains(galleryPage.nextGid)) {
+        log.warning('jumpPage detected pagination cursor loop at "${galleryPage.nextGid}", stop loading');
+        nextGid = null;
+        break;
+      }
+
+      cursor = galleryPage.nextGid;
     }
 
-    List<Gallery> gallerys = await postHandleNewGallerys(galleryPage.gallerys);
-
     state.gallerys = gallerys;
-    state.totalCount = galleryPage.totalCount;
-    state.prevGid = galleryPage.prevGid;
-    state.nextGid = galleryPage.nextGid;
-    state.favoriteSortOrder = galleryPage.favoriteSortOrder;
+    state.totalCount = totalCount;
+    state.prevGid = prevGid;
+    state.nextGid = nextGid;
+    state.favoriteSortOrder = favoriteSortOrder;
     state.galleryCollectionKey = Key(newUUID());
 
     state.seek = dateTime;
@@ -419,12 +540,19 @@ abstract class BasePageLogic extends GetxController with Scroll2TopLogicMixin {
       _cleanDuplicateGallery(gallerys);
     }
 
+    /// Hide favorited galleries before local block rules.
+    if (state.searchConfig.hideFavoritedGalleries && state.searchConfig.searchType != SearchType.favorite) {
+      gallerys = gallerys.where((gallery) => !gallery.isFavorite).toList();
+    }
+
+    gallerys = await _filterByTorrentsIfNeeded(gallerys);
+
     await _translateGalleryTagsIfNeeded(gallerys);
 
     List<Gallery> filteredGallerys = await _filterByBlockingRules(gallerys);
 
     if (preferenceSetting.preloadGalleryCover.isTrue) {
-      for (Gallery gallery in gallerys) {
+      for (Gallery gallery in filteredGallerys) {
         getNetworkImageData(gallery.cover.url, useCache: true);
       }
     }
@@ -435,6 +563,64 @@ abstract class BasePageLogic extends GetxController with Scroll2TopLogicMixin {
   /// deal with the first and last page
   void _cleanDuplicateGallery(List<Gallery> newGallerys) {
     newGallerys.removeWhere((newGallery) => state.gallerys.firstWhereOrNull((e) => e.galleryUrl == newGallery.galleryUrl) != null);
+  }
+
+  /// Client-side torrent filtering via gdata (chunks of at most 25).
+  ///
+  /// Policy is owned by [SearchConfig.needsClientTorrentFilter]:
+  /// - gallery/watched + effective with-torrents: server `f_sto` only
+  /// - with-torrents on favorite/popular/history/...: client gdata
+  /// - without-torrents (any type): client gdata; without wins if both flags set
+  ///
+  /// Metadata failures fail open (keep galleries, log + snack).
+  Future<List<Gallery>> _filterByTorrentsIfNeeded(List<Gallery> gallerys) async {
+    if (gallerys.isEmpty) {
+      return gallerys;
+    }
+
+    final SearchConfig config = state.searchConfig;
+    if (!config.needsClientTorrentFilter) {
+      return gallerys;
+    }
+
+    final bool onlyWithout = config.appliesOnlyShowGalleriesWithoutTorrents;
+    final bool onlyWith = config.appliesOnlyShowGalleriesWithTorrents;
+
+    const int chunkSize = 25;
+    final Map<int, int> torrentCountByGid = {};
+
+    try {
+      for (int i = 0; i < gallerys.length; i += chunkSize) {
+        final List<Gallery> chunk = gallerys.sublist(i, i + chunkSize > gallerys.length ? gallerys.length : i + chunkSize);
+        final List<GalleryMetadata> metadatas = await ehRequest.requestGalleryMetadatas<List<GalleryMetadata>>(
+          list: chunk.map((g) => (gid: g.gid, token: g.token)).toList(),
+          parser: EHSpiderParser.galleryMetadataJson2GalleryMetadatas,
+        );
+        for (final GalleryMetadata metadata in metadatas) {
+          torrentCountByGid[metadata.galleryUrl.gid] = metadata.torrentCount;
+        }
+      }
+    } catch (e, s) {
+      log.error('filterGalleriesByTorrentsFailed'.tr, e, s);
+      snack('filterGalleriesByTorrentsFailed'.tr, e.toString(), isShort: true);
+      /// Fail open: keep original list rather than stranding the loading state.
+      return gallerys;
+    }
+
+    return gallerys.where((gallery) {
+      final int? count = torrentCountByGid[gallery.gid];
+      /// Missing metadata: fail open for that item.
+      if (count == null) {
+        return true;
+      }
+      if (onlyWithout) {
+        return count == 0;
+      }
+      if (onlyWith) {
+        return count > 0;
+      }
+      return true;
+    }).toList();
   }
 
   Future<List<Gallery>> _filterByBlockingRules(List<Gallery> newGallerys) async {

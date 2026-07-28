@@ -652,6 +652,9 @@ class zh_TW {
       'searchGalleryDescription': '搜尋畫廊描述',
       'onlySearchExpungedGalleries': '僅搜尋已移除的畫廊',
       'onlyShowGalleriesWithTorrents': '只顯示有種子的畫廊',
+      'onlyShowGalleriesWithoutTorrents': '只顯示沒有種子的畫廊',
+      'hideFavoritedGalleries': '隱藏已收藏的畫廊',
+      'filterGalleriesByTorrentsFailed': '依種子篩選畫廊失敗',
       'searchLowPowerTags': '搜尋可信度較低的標籤',
       'searchDownVotedTags': '搜尋差評標籤',
       'pageAtLeast': '頁數至少',
@@ -677,6 +680,21 @@ title：同時配對羅馬音和日文的標題
 comment：配對評論
 favnote：配對收藏備註
       ''',
+      'favoriteBatchOperations': '收藏批次操作',
+      'batchFetchFavoriteTorrents': '批次取得收藏種子',
+      'deduplicateFavorites': '收藏去重',
+      'loadingAllFavorites': '正在載入全部收藏',
+      'checkingFavoriteTorrents': '正在檢查收藏種子',
+      'fetchingFavoriteTorrents': '正在取得收藏種子',
+      'noFavoriteTorrentsFound': '未找到收藏種子',
+      'favoriteTorrentsCopied': '已複製 @galleryCount 個畫廊的 @torrentCount 個種子，失敗：@failedCount',
+      'favoriteTorrentsUnavailable': '未取得可複製的種子，@failedCount 本漫畫檢查失敗',
+      'noDuplicateFavoritesFound': '未找到重複收藏',
+      'confirmDeduplicateFavorites': '確認收藏去重',
+      'confirmDeduplicateFavoritesContent': '發現 @duplicateCount 個重複項（同畫廊分類且規範化標題相同），將保留首項並移除後續項，是否繼續？',
+      'deduplicateFavoritesCompleted': '去重完成：成功 @successCount 個，失敗 @failedCount 個',
+      'favoriteBatchOperationFailed': '收藏批次操作失敗',
+      'operationCancelled': '操作已取消',
 
       /// popular page
       'getPopularListFailed': '獲取熱門畫廊列表失敗',

@@ -34,6 +34,66 @@ class FavoritePage extends BasePage {
       if (state.gallerys.isNotEmpty) IconButton(icon: const Icon(FontAwesomeIcons.paperPlane, size: 20), onPressed: logic.handleTapJumpButton),
       if (state.gallerys.isNotEmpty) IconButton(icon: const Icon(Icons.sort), onPressed: logic.handleChangeSortOrder),
       IconButton(icon: const Icon(Icons.filter_alt_outlined, size: 28), onPressed: logic.handleTapFilterButton),
+      _buildBatchOperationsAction(),
     ];
+  }
+
+  Widget _buildBatchOperationsAction() {
+    return GetBuilder<FavoritePageLogic>(
+      id: logic.batchOperationId,
+      builder: (_) {
+        if (state.batchOperationRunning) {
+          return const Padding(
+            padding: EdgeInsets.symmetric(horizontal: 12),
+            child: Center(
+              child: SizedBox(
+                width: 22,
+                height: 22,
+                child: CircularProgressIndicator(strokeWidth: 2),
+              ),
+            ),
+          );
+        }
+
+        return PopupMenuButton<String>(
+          tooltip: 'favoriteBatchOperations'.tr,
+          icon: const Icon(Icons.more_vert),
+          onSelected: (String value) {
+            switch (value) {
+              case 'batchFetchFavoriteTorrents':
+                logic.handleBatchFetchFavoriteTorrents();
+                break;
+              case 'deduplicateFavorites':
+                logic.handleDeduplicateFavorites();
+                break;
+            }
+          },
+          itemBuilder: (BuildContext context) {
+            return [
+              PopupMenuItem<String>(
+                value: 'batchFetchFavoriteTorrents',
+                child: Row(
+                  children: [
+                    const Icon(FontAwesomeIcons.magnet, size: 16),
+                    const SizedBox(width: 12),
+                    Flexible(child: Text('batchFetchFavoriteTorrents'.tr)),
+                  ],
+                ),
+              ),
+              PopupMenuItem<String>(
+                value: 'deduplicateFavorites',
+                child: Row(
+                  children: [
+                    const Icon(Icons.filter_none, size: 18),
+                    const SizedBox(width: 12),
+                    Flexible(child: Text('deduplicateFavorites'.tr)),
+                  ],
+                ),
+              ),
+            ];
+          },
+        );
+      },
+    );
   }
 }

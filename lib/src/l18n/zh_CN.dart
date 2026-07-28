@@ -652,6 +652,9 @@ class zh_CN {
       'searchGalleryDescription': '搜索画廊描述',
       'onlySearchExpungedGalleries': '仅搜索移除了的画廊',
       'onlyShowGalleriesWithTorrents': '只显示有种子的画廊',
+      'onlyShowGalleriesWithoutTorrents': '只显示没有种子的画廊',
+      'hideFavoritedGalleries': '隐藏已收藏的画廊',
+      'filterGalleriesByTorrentsFailed': '按种子筛选画廊失败',
       'searchLowPowerTags': '搜索可信度较低的标签',
       'searchDownVotedTags': '搜索差评标签',
       'pageAtLeast': '页数至少',
@@ -677,6 +680,21 @@ title：同时匹配罗马音和日文的标题
 comment：匹配评论
 favnote：匹配收藏备注
       ''',
+      'favoriteBatchOperations': '收藏批量操作',
+      'batchFetchFavoriteTorrents': '批量获取收藏种子',
+      'deduplicateFavorites': '收藏去重',
+      'loadingAllFavorites': '正在加载全部收藏',
+      'checkingFavoriteTorrents': '正在检查收藏种子',
+      'fetchingFavoriteTorrents': '正在获取收藏种子',
+      'noFavoriteTorrentsFound': '未找到收藏种子',
+      'favoriteTorrentsCopied': '已复制 @galleryCount 个画廊的 @torrentCount 个种子，失败：@failedCount',
+      'favoriteTorrentsUnavailable': '未获得可复制的种子，@failedCount 本漫画检查失败',
+      'noDuplicateFavoritesFound': '未找到重复收藏',
+      'confirmDeduplicateFavorites': '确认收藏去重',
+      'confirmDeduplicateFavoritesContent': '发现 @duplicateCount 个重复项（同画廊分类且规范化标题相同），将保留首项并移除后续项，是否继续？',
+      'deduplicateFavoritesCompleted': '去重完成：成功 @successCount 个，失败 @failedCount 个',
+      'favoriteBatchOperationFailed': '收藏批量操作失败',
+      'operationCancelled': '操作已取消',
 
       /// popular page
       'getPopularListFailed': '获取热门画廊列表失败',

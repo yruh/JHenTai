@@ -34,6 +34,8 @@ class SearchConfig {
 
   bool onlySearchExpungedGalleries = false;
   bool onlyShowGalleriesWithTorrents = false;
+  bool onlyShowGalleriesWithoutTorrents = false;
+  bool hideFavoritedGalleries = false;
 
   int? pageAtLeast;
   int? pageAtMost;
@@ -64,6 +66,8 @@ class SearchConfig {
     this.language,
     this.onlySearchExpungedGalleries = false,
     this.onlyShowGalleriesWithTorrents = false,
+    this.onlyShowGalleriesWithoutTorrents = false,
+    this.hideFavoritedGalleries = false,
     this.pageAtLeast,
     this.pageAtMost,
     this.minimumRating = 1,
@@ -90,6 +94,8 @@ class SearchConfig {
     this.language,
     this.onlySearchExpungedGalleries = false,
     this.onlyShowGalleriesWithTorrents = false,
+    this.onlyShowGalleriesWithoutTorrents = false,
+    this.hideFavoritedGalleries = false,
     this.pageAtLeast,
     this.pageAtMost,
     this.minimumRating = 1,
@@ -141,6 +147,24 @@ class SearchConfig {
     }
   }
 
+  /// When both torrent flags are true, without-torrents wins stably.
+  bool get appliesOnlyShowGalleriesWithoutTorrents => onlyShowGalleriesWithoutTorrents;
+
+  /// Effective with-torrents flag after without-priority conflict resolution.
+  bool get appliesOnlyShowGalleriesWithTorrents =>
+      onlyShowGalleriesWithTorrents && !onlyShowGalleriesWithoutTorrents;
+
+  /// gallery/watched + effective with-torrents uses server `f_sto`.
+  bool get usesServerTorrentFilter =>
+      appliesOnlyShowGalleriesWithTorrents &&
+      (searchType == SearchType.gallery || searchType == SearchType.watched);
+
+  /// Client gdata filter: all without-torrents, and with-torrents on any type
+  /// that does not use server `f_sto` (favorite / popular / history / ...).
+  bool get needsClientTorrentFilter =>
+      appliesOnlyShowGalleriesWithoutTorrents ||
+      (appliesOnlyShowGalleriesWithTorrents && !usesServerTorrentFilter);
+
   /// search params
   Map<String, dynamic> toQueryParameters() {
     Map<String, dynamic> params = {};
@@ -159,7 +183,8 @@ class SearchConfig {
       if (onlySearchExpungedGalleries) {
         params['f_sh'] = 'on';
       }
-      if (onlyShowGalleriesWithTorrents) {
+      /// Only emit f_sto for effective with-torrents (without wins on conflict).
+      if (appliesOnlyShowGalleriesWithTorrents) {
         params['f_sto'] = 'on';
       }
 
@@ -263,6 +288,13 @@ class SearchConfig {
   }
 
   factory SearchConfig.fromJson(Map<String, dynamic> json) {
+    bool onlyWith = json["onlyShowGalleriesWithTorrents"] ?? false;
+    bool onlyWithout = json["onlyShowGalleriesWithoutTorrents"] ?? false;
+    /// Conflict: without-torrents wins; clear with-torrents so f_sto is not re-emitted.
+    if (onlyWith && onlyWithout) {
+      onlyWith = false;
+    }
+
     return SearchConfig(
       searchType: SearchType.values[json["searchType"]],
       includeDoujinshi: json["includeDoujinshi"],
@@ -279,7 +311,9 @@ class SearchConfig {
       tags: (json["tags"] as List?)?.map((e) => TagData.fromJson(e)).toList(),
       language: json["language"],
       onlySearchExpungedGalleries: json["searchExpungedGalleries"],
-      onlyShowGalleriesWithTorrents: json["onlyShowGalleriesWithTorrents"],
+      onlyShowGalleriesWithTorrents: onlyWith,
+      onlyShowGalleriesWithoutTorrents: onlyWithout,
+      hideFavoritedGalleries: json["hideFavoritedGalleries"] ?? false,
       pageAtLeast: json["pageAtLeast"],
       pageAtMost: json["pageAtMost"],
       minimumRating: json["minimumRating"],
@@ -308,6 +342,8 @@ class SearchConfig {
       "language": language,
       "searchExpungedGalleries": onlySearchExpungedGalleries,
       "onlyShowGalleriesWithTorrents": onlyShowGalleriesWithTorrents,
+      "onlyShowGalleriesWithoutTorrents": onlyShowGalleriesWithoutTorrents,
+      "hideFavoritedGalleries": hideFavoritedGalleries,
       "pageAtLeast": pageAtLeast,
       "pageAtMost": pageAtMost,
       "minimumRating": minimumRating,
@@ -335,6 +371,8 @@ class SearchConfig {
     String? language,
     bool? searchExpungedGalleries,
     bool? onlyShowGalleriesWithTorrents,
+    bool? onlyShowGalleriesWithoutTorrents,
+    bool? hideFavoritedGalleries,
     int? pageAtLeast,
     int? pageAtMost,
     int? minimumRating,
@@ -357,20 +395,22 @@ class SearchConfig {
       keyword: keyword ?? this.keyword,
       tags: tags ?? this.tags?.map((tag) => tag.copyWith()).toList(),
       language: language ?? this.language,
-      onlySearchExpungedGalleries: searchExpungedGalleries ?? onlySearchExpungedGalleries,
+      onlySearchExpungedGalleries: searchExpungedGalleries ?? this.onlySearchExpungedGalleries,
       onlyShowGalleriesWithTorrents: onlyShowGalleriesWithTorrents ?? this.onlyShowGalleriesWithTorrents,
+      onlyShowGalleriesWithoutTorrents: onlyShowGalleriesWithoutTorrents ?? this.onlyShowGalleriesWithoutTorrents,
+      hideFavoritedGalleries: hideFavoritedGalleries ?? this.hideFavoritedGalleries,
       pageAtLeast: pageAtLeast ?? this.pageAtLeast,
       pageAtMost: pageAtMost ?? this.pageAtMost,
       minimumRating: minimumRating ?? this.minimumRating,
       disableFilterForLanguage: disableFilterForLanguage ?? this.disableFilterForLanguage,
       disableFilterForUploader: disableFilterForUploader ?? this.disableFilterForUploader,
       disableFilterForTags: disableFilterForTags ?? this.disableFilterForTags,
-      searchFavoriteCategoryIndex: searchFavoriteCategoryIndex ?? searchFavoriteCategoryIndex,
+      searchFavoriteCategoryIndex: this.searchFavoriteCategoryIndex,
     );
   }
 
   @override
   String toString() {
-    return 'SearchConfig{searchType: $searchType, includeDoujinshi: $includeDoujinshi, includeManga: $includeManga, includeArtistCG: $includeArtistCG, includeGameCg: $includeGameCg, includeWestern: $includeWestern, includeNonH: $includeNonH, includeImageSet: $includeImageSet, includeCosplay: $includeCosplay, includeAsianPorn: $includeAsianPorn, includeMisc: $includeMisc, keyword: $keyword, tags: $tags, language: $language, onlySearchExpungedGalleries: $onlySearchExpungedGalleries, onlyShowGalleriesWithTorrents: $onlyShowGalleriesWithTorrents, pageAtLeast: $pageAtLeast, pageAtMost: $pageAtMost, minimumRating: $minimumRating, disableFilterForLanguage: $disableFilterForLanguage, disableFilterForUploader: $disableFilterForUploader, disableFilterForTags: $disableFilterForTags, searchFavoriteCategoryIndex: $searchFavoriteCategoryIndex}';
+    return 'SearchConfig{searchType: $searchType, includeDoujinshi: $includeDoujinshi, includeManga: $includeManga, includeArtistCG: $includeArtistCG, includeGameCg: $includeGameCg, includeWestern: $includeWestern, includeNonH: $includeNonH, includeImageSet: $includeImageSet, includeCosplay: $includeCosplay, includeAsianPorn: $includeAsianPorn, includeMisc: $includeMisc, keyword: $keyword, tags: $tags, language: $language, onlySearchExpungedGalleries: $onlySearchExpungedGalleries, onlyShowGalleriesWithTorrents: $onlyShowGalleriesWithTorrents, onlyShowGalleriesWithoutTorrents: $onlyShowGalleriesWithoutTorrents, hideFavoritedGalleries: $hideFavoritedGalleries, pageAtLeast: $pageAtLeast, pageAtMost: $pageAtMost, minimumRating: $minimumRating, disableFilterForLanguage: $disableFilterForLanguage, disableFilterForUploader: $disableFilterForUploader, disableFilterForTags: $disableFilterForTags, searchFavoriteCategoryIndex: $searchFavoriteCategoryIndex}';
   }
 }

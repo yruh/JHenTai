@@ -138,6 +138,8 @@ class _EHSearchConfigDialogState extends State<EHSearchConfigDialog> {
                 _buildFavoriteTags().marginOnly(top: 20),
                 _buildKeywordTextField().marginOnly(top: 20),
                 _buildFavoriteHint().marginOnly(top: 8),
+                _buildOnlySearchGallerysWithTorrentsSwitch(),
+                _buildOnlySearchGallerysWithoutTorrentsSwitch(),
               ],
             )
           else
@@ -149,6 +151,8 @@ class _EHSearchConfigDialogState extends State<EHSearchConfigDialog> {
                 _buildLanguageSelector().marginOnly(top: 20),
                 _buildSearchExpungedGalleriesSwitch(),
                 _buildOnlySearchGallerysWithTorrentsSwitch(),
+                _buildOnlySearchGallerysWithoutTorrentsSwitch(),
+                _buildHideFavoritedGalleriesSwitch(),
                 _buildPageRangeSelector(),
                 _buildRatingSelector(),
                 _buildDisableFilterForLanguageSwitch(),
@@ -563,7 +567,41 @@ class _EHSearchConfigDialogState extends State<EHSearchConfigDialog> {
       title: Text('onlyShowGalleriesWithTorrents'.tr, style: const TextStyle(fontSize: 15)),
       trailing: Switch(
         value: searchConfig.onlyShowGalleriesWithTorrents,
-        onChanged: (bool value) => setState(() => searchConfig.onlyShowGalleriesWithTorrents = value),
+        onChanged: (bool value) => setState(() {
+          searchConfig.onlyShowGalleriesWithTorrents = value;
+          if (value) {
+            searchConfig.onlyShowGalleriesWithoutTorrents = false;
+          }
+        }),
+      ),
+    );
+  }
+
+  Widget _buildOnlySearchGallerysWithoutTorrentsSwitch() {
+    return ListTile(
+      dense: true,
+      contentPadding: EdgeInsets.zero,
+      title: Text('onlyShowGalleriesWithoutTorrents'.tr, style: const TextStyle(fontSize: 15)),
+      trailing: Switch(
+        value: searchConfig.onlyShowGalleriesWithoutTorrents,
+        onChanged: (bool value) => setState(() {
+          searchConfig.onlyShowGalleriesWithoutTorrents = value;
+          if (value) {
+            searchConfig.onlyShowGalleriesWithTorrents = false;
+          }
+        }),
+      ),
+    );
+  }
+
+  Widget _buildHideFavoritedGalleriesSwitch() {
+    return ListTile(
+      dense: true,
+      contentPadding: EdgeInsets.zero,
+      title: Text('hideFavoritedGalleries'.tr, style: const TextStyle(fontSize: 15)),
+      trailing: Switch(
+        value: searchConfig.hideFavoritedGalleries,
+        onChanged: (bool value) => setState(() => searchConfig.hideFavoritedGalleries = value),
       ),
     );
   }
