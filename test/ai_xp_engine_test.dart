@@ -142,6 +142,195 @@ void main() {
       final AiXpProfile b = engine.buildProfile(signals, nowMs: nowMs);
       expect(a.toJson(), b.toJson());
     });
+
+    test('small homogeneous library (N=2) keeps shared tags and titles', () {
+      final AiXpProfile profile = engine.buildProfile(
+        <AiGallerySignal>[
+          _sig(
+            gid: 1,
+            title: 'Blue Archive Sensei',
+            tags: <String>['female:loli', 'parody:blue_archive'],
+            favoritedAtMs: nowMs,
+          ),
+          _sig(
+            gid: 2,
+            title: 'Blue Archive Sensei',
+            tags: <String>['female:loli', 'parody:blue_archive'],
+            favoritedAtMs: nowMs - dayMs,
+          ),
+        ],
+        nowMs: nowMs,
+      );
+
+      // N < 5: hard saturation off even when every tag/title is universal.
+      expect(profile.isEmpty, isFalse);
+      expect(profile.saturatedTags, isEmpty);
+      expect(profile.tagWeights.containsKey('female:loli'), isTrue);
+      expect(profile.tagWeights.containsKey('parody:blue_archive'), isTrue);
+      expect(profile.titleWeights.containsKey('blue'), isTrue);
+      expect(profile.titleWeights.containsKey('archive'), isTrue);
+
+      final List<AiXpRankedCandidate> ranked = engine.rankCandidates(
+        profile: profile,
+        candidates: <AiGallerySignal>[
+          _sig(
+            gid: 200,
+            title: 'Blue Archive Vol.2',
+            tags: <String>['female:loli'],
+          ),
+        ],
+        applyUploaderDiversity: false,
+      );
+      expect(ranked, isNotEmpty);
+      expect(ranked.first.signal.gid, 200);
+      expect(ranked.first.score, greaterThan(0));
+    });
+
+    test('single favorite cold-start keeps tags and titles for ranking', () {
+      final AiXpProfile profile = engine.buildProfile(
+        <AiGallerySignal>[
+          _sig(
+            gid: 1,
+            title: 'Blue Archive Sensei',
+            tags: <String>['female:loli', 'parody:blue_archive'],
+            favoritedAtMs: nowMs,
+          ),
+        ],
+        nowMs: nowMs,
+      );
+
+      expect(profile.isEmpty, isFalse);
+      expect(profile.tagWeights.containsKey('female:loli'), isTrue);
+      expect(profile.tagWeights.containsKey('parody:blue_archive'), isTrue);
+      expect(profile.titleWeights.containsKey('blue'), isTrue);
+      expect(profile.titleWeights.containsKey('archive'), isTrue);
+      expect(profile.titleWeights.containsKey('sensei'), isTrue);
+      expect(profile.saturatedTags, isEmpty);
+      // All finite positive weights (no NaN/Inf from cold-start path).
+      for (final double w in profile.tagWeights.values) {
+        expect(w.isFinite, isTrue);
+        expect(w, greaterThan(0));
+      }
+      for (final double w in profile.titleWeights.values) {
+        expect(w.isFinite, isTrue);
+        expect(w, greaterThan(0));
+      }
+
+      final List<AiXpRankedCandidate> ranked = engine.rankCandidates(
+        profile: profile,
+        candidates: <AiGallerySignal>[
+          _sig(
+            gid: 200,
+            title: 'Other Work',
+            tags: <String>['female:loli', 'parody:blue_archive'],
+          ),
+          _sig(
+            gid: 201,
+            title: 'Unrelated',
+            tags: <String>['male:solo'],
+          ),
+        ],
+        applyUploaderDiversity: false,
+      );
+
+      expect(ranked.map((AiXpRankedCandidate c) => c.signal.gid), contains(200));
+      expect(ranked.map((AiXpRankedCandidate c) => c.signal.gid), isNot(contains(201)));
+      expect(ranked.map((AiXpRankedCandidate c) => c.signal.gid), isNot(contains(1)));
+      expect(ranked.first.signal.gid, 200);
+      expect(ranked.first.score.isFinite, isTrue);
+      expect(ranked.first.score, greaterThan(0));
+    });
+
+    test('pure title favorite forms profile and drives title-match ranking', () {
+      final AiXpProfile profile = engine.buildProfile(
+        <AiGallerySignal>[
+          _sig(
+            gid: 1,
+            title: 'Blue Archive Sensei',
+            tags: const <String>[],
+            favoritedAtMs: nowMs,
+          ),
+        ],
+        nowMs: nowMs,
+      );
+
+      expect(profile.isEmpty, isFalse);
+      expect(profile.tagWeights, isEmpty);
+      expect(profile.titleWeights.containsKey('blue'), isTrue);
+      expect(profile.titleWeights.containsKey('archive'), isTrue);
+      expect(profile.titleWeights.containsKey('sensei'), isTrue);
+
+      final List<AiXpRankedCandidate> ranked = engine.rankCandidates(
+        profile: profile,
+        candidates: <AiGallerySignal>[
+          _sig(gid: 200, title: 'Blue Archive Vol.2', tags: const <String>[]),
+          _sig(gid: 201, title: 'Completely Different Work', tags: const <String>[]),
+        ],
+        applyUploaderDiversity: false,
+      );
+
+      expect(ranked.map((AiXpRankedCandidate c) => c.signal.gid), contains(200));
+      expect(ranked.map((AiXpRankedCandidate c) => c.signal.gid), isNot(contains(201)));
+      expect(ranked.first.signal.gid, 200);
+      expect(
+        ranked.first.explanations.any((AiXpScoreExplanation e) => e.kind == 'title'),
+        isTrue,
+      );
+      expect(ranked.first.score.isFinite, isTrue);
+      expect(ranked.first.score, greaterThan(0));
+    });
+
+    test('timeDecayDays <= 0 yields finite weights without NaN or Inf', () {
+      final List<AiGallerySignal> signals = <AiGallerySignal>[
+        _sig(
+          gid: 1,
+          title: 'Recent Title',
+          tags: <String>['female:loli'],
+          favoritedAtMs: nowMs,
+        ),
+        _sig(
+          gid: 2,
+          title: 'Older Title',
+          tags: <String>['female:maid'],
+          favoritedAtMs: nowMs - 30 * dayMs,
+        ),
+      ];
+
+      for (final int decayDays in <int>[0, -1, -180]) {
+        final AiXpEngine noDecay = AiXpEngine(timeDecayDays: decayDays);
+        final AiXpProfile profile = noDecay.buildProfile(signals, nowMs: nowMs);
+
+        expect(profile.isEmpty, isFalse, reason: 'timeDecayDays=$decayDays');
+        for (final double w in <double>[
+          ...profile.tagWeights.values,
+          ...profile.titleWeights.values,
+        ]) {
+          expect(w.isNaN, isFalse, reason: 'timeDecayDays=$decayDays weight=$w');
+          expect(w.isInfinite, isFalse, reason: 'timeDecayDays=$decayDays weight=$w');
+          expect(w.isFinite, isTrue, reason: 'timeDecayDays=$decayDays weight=$w');
+          expect(w, greaterThan(0), reason: 'timeDecayDays=$decayDays weight=$w');
+        }
+        for (final AiXpTagPair pair in profile.tagPairs) {
+          expect(pair.pmi.isFinite, isTrue);
+          expect(pair.weight.isFinite, isTrue);
+        }
+
+        // Same-age terms get equal decay (factor 1.0); ranking stays usable.
+        final List<AiXpRankedCandidate> ranked = noDecay.rankCandidates(
+          profile: profile,
+          candidates: <AiGallerySignal>[
+            _sig(gid: 100, tags: <String>['female:loli']),
+            _sig(gid: 101, tags: <String>['female:maid']),
+          ],
+          applyUploaderDiversity: false,
+        );
+        expect(ranked, isNotEmpty, reason: 'timeDecayDays=$decayDays');
+        for (final AiXpRankedCandidate c in ranked) {
+          expect(c.score.isFinite, isTrue, reason: 'timeDecayDays=$decayDays');
+          expect(c.score.isNaN, isFalse, reason: 'timeDecayDays=$decayDays');
+        }
+      }
+    });
   });
 
   group('tokenizeTitle', () {

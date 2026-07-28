@@ -160,7 +160,7 @@ class AiCenterPageLogic extends GetxController with GetSingleTickerProviderState
       _handleError('load AI XP profile failed', e, s);
     } finally {
       _clearProgress();
-      updateSafely([profileId, pageId]);
+      updateSafely([profileId, recommendId, manageId, pageId]);
     }
   }
 
@@ -171,21 +171,34 @@ class AiCenterPageLogic extends GetxController with GetSingleTickerProviderState
 
     state.profileLoadingState = LoadingState.loading;
     state.showRemoteFallback = false;
-    updateSafely([profileId, progressId, pageId, modeId]);
+    updateSafely([profileId, recommendId, manageId, progressId, pageId, modeId]);
 
     try {
       final AiXpAnalysisResult result = await aiXpService.analyzeFavorites(onProgress: _onProgress);
       state.profile = result.profile;
       state.profileLoadingState =
           result.profile.isEmpty ? LoadingState.noData : LoadingState.success;
+      _invalidateRecommendations();
       toast('aiProfileBuilt'.tr);
     } catch (e, s) {
       state.profileLoadingState = LoadingState.error;
       _handleError('refresh AI XP profile failed', e, s);
     } finally {
       _clearProgress();
-      updateSafely([profileId, progressId, pageId]);
+      updateSafely([profileId, recommendId, manageId, progressId, pageId]);
     }
+  }
+
+  void _invalidateRecommendations() {
+    state.recommendations = <AiXpRecommendation>[];
+    state.recommendLoadingState = LoadingState.idle;
+  }
+
+  void _syncProfileAfterMutation() {
+    state.profile = aiXpService.cachedProfile ?? state.profile;
+    state.profileLoadingState =
+        state.profile == null || state.profile!.isEmpty ? LoadingState.noData : LoadingState.success;
+    _invalidateRecommendations();
   }
 
   // ---------------------------------------------------------------------------
@@ -277,8 +290,7 @@ class AiCenterPageLogic extends GetxController with GetSingleTickerProviderState
         AiOrganizationPreviewDialog(
           planResult: result,
           initiallySelectedGids: Set<int>.from(state.selectedMoveGids),
-          categoryNameResolver: (int? index, {String? fallback}) =>
-              favoriteCategoryName(index, fallback: fallback),
+          categoryNameResolver: favoriteCategoryName,
         ),
       );
       if (selected == null) {
@@ -332,17 +344,14 @@ class AiCenterPageLogic extends GetxController with GetSingleTickerProviderState
           'failed': result.failureCount.toString(),
         }),
       );
-      // Profile may have been rebuilt from cache.
-      state.profile = aiXpService.cachedProfile ?? state.profile;
-      if (state.profile != null && !state.profile!.isEmpty) {
-        state.profileLoadingState = LoadingState.success;
-      }
+      // Profile may have been rebuilt from cache; drop stale recommendations.
+      _syncProfileAfterMutation();
     } catch (e, s) {
       state.organizationApplyLoadingState = LoadingState.error;
       _handleError('apply organization failed', e, s);
     } finally {
       _clearProgress();
-      updateSafely([manageId, profileId, progressId, pageId]);
+      updateSafely([manageId, profileId, recommendId, progressId, pageId]);
     }
   }
 
@@ -440,16 +449,14 @@ class AiCenterPageLogic extends GetxController with GetSingleTickerProviderState
           'failed': result.failureCount.toString(),
         }),
       );
-      state.profile = aiXpService.cachedProfile ?? state.profile;
-      if (state.profile != null && !state.profile!.isEmpty) {
-        state.profileLoadingState = LoadingState.success;
-      }
+      // Profile may have been rebuilt from cache; drop stale recommendations.
+      _syncProfileAfterMutation();
     } catch (e, s) {
       state.duplicateApplyLoadingState = LoadingState.error;
       _handleError('apply duplicate removal failed', e, s);
     } finally {
       _clearProgress();
-      updateSafely([manageId, profileId, progressId, pageId]);
+      updateSafely([manageId, profileId, recommendId, progressId, pageId]);
     }
   }
 

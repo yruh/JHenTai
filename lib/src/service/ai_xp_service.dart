@@ -248,13 +248,9 @@ class AiXpService {
       return const <AiXpRecommendation>[];
     }
 
-    if (!hasLiveFavorites) {
-      try {
-        await _ensureLiveFavorites(onProgress: onProgress);
-      } catch (e, s) {
-        log.warning('generateRecommendations: load favorites for exclusion failed', e, s);
-      }
-    }
+    // Always refresh so exclusion reflects server-side favorite add/remove.
+    // Fail closed: do not score with a stale cache that may omit newly favorited gids.
+    await _ensureLiveFavorites(onProgress: onProgress);
 
     final List<SearchConfig> searches = _buildRecommendationSearches(effective);
     final Map<int, Gallery> candidatesByGid = <int, Gallery>{};
@@ -423,8 +419,8 @@ class AiXpService {
 
     try {
       await favoriteSetting.fetchDataFromEH();
-    } catch (e, s) {
-      log.warning('refresh favoriteSetting after duplicate removal failed', e, s);
+    } catch (e) {
+      log.warning('refresh favoriteSetting after duplicate removal failed', e, true);
     }
 
     await _rebuildAndSaveProfileFromCache(onProgress: onProgress);
@@ -556,8 +552,8 @@ class AiXpService {
 
     try {
       await favoriteSetting.fetchDataFromEH();
-    } catch (e, s) {
-      log.warning('refresh favoriteSetting after organization failed', e, s);
+    } catch (e) {
+      log.warning('refresh favoriteSetting after organization failed', e, true);
     }
 
     await _rebuildAndSaveProfileFromCache(onProgress: onProgress);
@@ -703,16 +699,20 @@ class AiXpService {
   // Internal: favorites load / enrich
   // ---------------------------------------------------------------------------
 
+  /// Re-enumerate and enrich every server favorite, then replace the in-memory cache.
+  ///
+  /// Always hits the server (no non-empty-cache short-circuit). An empty snapshot
+  /// clears the cache via [_replaceFavoriteCache]. Callers that need a fresh
+  /// exclusion/plan/mutation snapshot must await this; failures propagate so
+  /// stale data is not used as if it were current.
   Future<void> _ensureLiveFavorites({AiXpProgressCallback? onProgress}) async {
-    if (hasLiveFavorites) {
-      return;
-    }
     final List<Gallery> favorites = await _enumerateAllServerFavorites(onProgress: onProgress);
     final ({List<Gallery> galleries, List<AiGallerySignal> signals, int failures}) enriched =
         await _enrichFavorites(favorites, onProgress: onProgress);
     if (enriched.failures > 0) {
       log.warning('ensureLiveFavorites metadata failures: ${enriched.failures}');
     }
+    // Empty [favorites] / [enriched] correctly wipes previous gallery and signal maps.
     _replaceFavoriteCache(enriched.galleries, enriched.signals);
   }
 

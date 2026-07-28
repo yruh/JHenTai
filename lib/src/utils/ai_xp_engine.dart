@@ -84,8 +84,7 @@ class AiXpEngine {
     for (final MapEntry<String, List<_Occurrence>> entry in tagOcc.entries) {
       final int df = entry.value.map((_Occurrence o) => o.gid).toSet().length;
       tagDf[entry.key] = df;
-      final double saturation = totalDocs > 0 ? df / totalDocs : 0;
-      if (saturation > saturationThreshold) {
+      if (_isSaturated(df: df, totalDocuments: totalDocs)) {
         saturatedTags.add(entry.key);
       }
     }
@@ -110,8 +109,7 @@ class AiXpEngine {
     final Map<String, double> titleWeights = <String, double>{};
     for (final MapEntry<String, List<_Occurrence>> entry in titleOcc.entries) {
       final int df = entry.value.map((_Occurrence o) => o.gid).toSet().length;
-      final double saturation = totalDocs > 0 ? df / totalDocs : 0;
-      if (saturation > saturationThreshold) {
+      if (_isSaturated(df: df, totalDocuments: totalDocs)) {
         continue;
       }
       final double weight = _calculateWeight(
@@ -185,21 +183,39 @@ class AiXpEngine {
     );
   }
 
+  /// Minimum source-document count before hard saturation filtering applies.
+  ///
+  /// Below this, a small homogeneous library cannot separate universal noise
+  /// from the only available preference signal, so all terms are kept.
+  static const int _minDocumentsForSaturation = 5;
+
+  /// Whether [df]/[totalDocuments] should be hard-filtered as saturated noise.
+  ///
+  /// Cold-start guard: saturation is disabled until the corpus has at least
+  /// [_minDocumentsForSaturation] documents. Larger corpora keep the existing
+  /// threshold behavior (e.g. 6/6 universal tags still drop out).
+  bool _isSaturated({required int df, required int totalDocuments}) {
+    if (totalDocuments < _minDocumentsForSaturation) {
+      return false;
+    }
+    return df / totalDocuments > saturationThreshold;
+  }
+
   double _calculateWeight({
     required List<_Occurrence> occurrences,
     required int totalDocuments,
     required int nowMs,
   }) {
     final int df = occurrences.map((_Occurrence o) => o.gid).toSet().length;
-    final double dfRatio = totalDocuments > 0 ? df / totalDocuments : 0;
-    if (dfRatio > saturationThreshold) {
+    if (_isSaturated(df: df, totalDocuments: totalDocuments)) {
       return 0;
     }
 
     double weightedTf = 0;
     for (final _Occurrence occ in occurrences) {
       final int daysAgo = math.max(0, ((nowMs - occ.timestampMs) / 86400000).floor());
-      final double decay = math.exp(-daysAgo / timeDecayDays);
+      // Non-positive decay window disables recency decay (avoids /0, NaN, Inf).
+      final double decay = timeDecayDays <= 0 ? 1.0 : math.exp(-daysAgo / timeDecayDays);
       weightedTf += decay * occ.weightMult;
     }
     if (weightedTf > 0) {
@@ -736,17 +752,17 @@ class AiXpEngine {
       }
     }
 
-    // Min rating.
+    // Min rating. English "stars" suffix is optional; capture the full numeric token.
     final List<RegExp> ratingPatterns = <RegExp>[
       RegExp(
-        r'(?:min(?:imum)?\s*rating|rating)\s*[>=:：]?\s*(\d(?:\.\d)?)\s*stars?',
+        r'(?:min(?:imum)?\s*rating|rating)\s*[>=:：]?\s*(\d+(?:\.\d+)?)\s*(?:stars?)?',
         caseSensitive: false,
       ),
-      RegExp(r'rating\s*[>=:：]\s*(\d(?:\.\d)?)', caseSensitive: false),
-      RegExp(r'评分\s*(?:至少|>=?|不低于)\s*(\d(?:\.\d)?)'),
-      RegExp(r'評分\s*(?:至少|>=?|不低於)\s*(\d(?:\.\d)?)'),
-      RegExp(r'(?:至少\s*)(\d(?:\.\d)?)\s*星'),
-      RegExp(r'(\d)\s*星(?:以上|及以上)?'),
+      RegExp(r'rating\s*[>=:：]\s*(\d+(?:\.\d+)?)', caseSensitive: false),
+      RegExp(r'评分\s*(?:至少|>=?|不低于)\s*(\d+(?:\.\d+)?)'),
+      RegExp(r'評分\s*(?:至少|>=?|不低於)\s*(\d+(?:\.\d+)?)'),
+      RegExp(r'(?:至少\s*)(\d+(?:\.\d+)?)\s*星'),
+      RegExp(r'(\d+(?:\.\d+)?)\s*星(?:以上|及以上)?'),
     ];
     for (final RegExp re in ratingPatterns) {
       final Match? m = re.firstMatch(remaining);

@@ -426,7 +426,12 @@ class AiCenterPage extends StatelessWidget {
       );
     }
     if (!state.hasProfile && state.recommendations.isEmpty) {
-      return _emptyBox(context, 'aiNeedProfile'.tr);
+      return _emptyBox(
+        context,
+        'aiNeedProfile'.tr,
+        onAction: state.profileLoadingState == LoadingState.loading ? null : logic.refreshProfile,
+        actionLabel: 'refreshAiXp'.tr,
+      );
     }
     if (state.recommendations.isEmpty) {
       return _emptyBox(
