@@ -1,4 +1,4 @@
-/// Pure local AI XP domain models.
+/// AI XP domain models and locally computed statistical signals.
 ///
 /// No Flutter / GetX / UI imports. Gallery rows are adapted into
 /// [AiGallerySignal] by a later service; this file only defines the
@@ -71,8 +71,9 @@ class AiGallerySignal {
       gid: (json['gid'] as num).toInt(),
       title: json['title'] as String? ?? '',
       category: json['category'] as String? ?? '',
-      tags: (json['tags'] as List<dynamic>?)?.map((e) => e.toString()).toList() ??
-          const <String>[],
+      tags:
+          (json['tags'] as List<dynamic>?)?.map((e) => e.toString()).toList() ??
+              const <String>[],
       uploader: json['uploader'] as String?,
       rating: (json['rating'] as num?)?.toDouble() ?? 0,
       pageCount: (json['pageCount'] as num?)?.toInt(),
@@ -127,9 +128,93 @@ class AiXpTagPair {
   }
 }
 
+/// Human-readable remote-AI preference for UI display.
+class AiXpPreference {
+  final String name;
+  final String description;
+
+  /// Confidence in [0, 1]. Values outside the range are clamped.
+  final double confidence;
+
+  /// Supporting tags as `namespace:key` (preferred) or bare keys.
+  final List<String> evidenceTags;
+
+  AiXpPreference({
+    required this.name,
+    required this.description,
+    required double confidence,
+    this.evidenceTags = const <String>[],
+  }) : confidence = _clampConfidence(confidence);
+
+  static double _clampConfidence(double value) {
+    if (value.isNaN) {
+      return 0;
+    }
+    if (value < 0) {
+      return 0;
+    }
+    if (value > 1) {
+      return 1;
+    }
+    return value;
+  }
+
+  Map<String, dynamic> toJson() {
+    return <String, dynamic>{
+      'name': name,
+      'description': description,
+      'confidence': confidence,
+      'evidenceTags': List<String>.from(evidenceTags),
+    };
+  }
+
+  factory AiXpPreference.fromJson(Map<String, dynamic> json) {
+    return AiXpPreference(
+      name: json['name'] as String? ?? '',
+      description: json['description'] as String? ?? '',
+      confidence: (json['confidence'] as num?)?.toDouble() ?? 0,
+      evidenceTags: (json['evidenceTags'] as List<dynamic>?)
+              ?.map((e) => e.toString())
+              .toList() ??
+          const <String>[],
+    );
+  }
+}
+
+/// Suggested search strategy derived from remote AI summary.
+class AiXpSearchStrategy {
+  final List<String> tags;
+  final String keyword;
+  final String reason;
+
+  const AiXpSearchStrategy({
+    this.tags = const <String>[],
+    this.keyword = '',
+    this.reason = '',
+  });
+
+  Map<String, dynamic> toJson() {
+    return <String, dynamic>{
+      'tags': List<String>.from(tags),
+      'keyword': keyword,
+      'reason': reason,
+    };
+  }
+
+  factory AiXpSearchStrategy.fromJson(Map<String, dynamic> json) {
+    return AiXpSearchStrategy(
+      tags:
+          (json['tags'] as List<dynamic>?)?.map((e) => e.toString()).toList() ??
+              const <String>[],
+      keyword: json['keyword'] as String? ?? '',
+      reason: json['reason'] as String? ?? '',
+    );
+  }
+}
+
 /// Versioned user XP profile built from [AiGallerySignal]s.
 class AiXpProfile {
-  static const int currentVersion = 1;
+  static const int currentVersion = 2;
 
   final int version;
   final int builtAtMs;
@@ -150,6 +235,18 @@ class AiXpProfile {
   /// Tags removed by saturation filtering.
   final List<String> saturatedTags;
 
+  /// Optional human-readable remote AI summary text.
+  final String? summary;
+
+  /// Structured remote-AI preferences for UI.
+  final List<AiXpPreference> preferences;
+
+  /// Suggested search strategies from remote AI.
+  final List<AiXpSearchStrategy> searchStrategies;
+
+  /// Whether [summary]/[preferences]/[searchStrategies] came from remote AI.
+  final bool generatedByRemoteAi;
+
   const AiXpProfile({
     this.version = currentVersion,
     required this.builtAtMs,
@@ -159,9 +256,43 @@ class AiXpProfile {
     this.titleWeights = const <String, double>{},
     this.tagPairs = const <AiXpTagPair>[],
     this.saturatedTags = const <String>[],
+    this.summary,
+    this.preferences = const <AiXpPreference>[],
+    this.searchStrategies = const <AiXpSearchStrategy>[],
+    this.generatedByRemoteAi = false,
   });
 
   bool get isEmpty => tagWeights.isEmpty && titleWeights.isEmpty;
+
+  AiXpProfile copyWith({
+    int? version,
+    int? builtAtMs,
+    int? signalCount,
+    List<int>? sourceGids,
+    Map<String, double>? tagWeights,
+    Map<String, double>? titleWeights,
+    List<AiXpTagPair>? tagPairs,
+    List<String>? saturatedTags,
+    String? summary,
+    List<AiXpPreference>? preferences,
+    List<AiXpSearchStrategy>? searchStrategies,
+    bool? generatedByRemoteAi,
+  }) {
+    return AiXpProfile(
+      version: version ?? this.version,
+      builtAtMs: builtAtMs ?? this.builtAtMs,
+      signalCount: signalCount ?? this.signalCount,
+      sourceGids: sourceGids ?? this.sourceGids,
+      tagWeights: tagWeights ?? this.tagWeights,
+      titleWeights: titleWeights ?? this.titleWeights,
+      tagPairs: tagPairs ?? this.tagPairs,
+      saturatedTags: saturatedTags ?? this.saturatedTags,
+      summary: summary ?? this.summary,
+      preferences: preferences ?? this.preferences,
+      searchStrategies: searchStrategies ?? this.searchStrategies,
+      generatedByRemoteAi: generatedByRemoteAi ?? this.generatedByRemoteAi,
+    );
+  }
 
   Map<String, dynamic> toJson() {
     final List<String> tagKeys = tagWeights.keys.toList()..sort();
@@ -174,10 +305,19 @@ class AiXpProfile {
       'builtAtMs': builtAtMs,
       'signalCount': signalCount,
       'sourceGids': gids,
-      'tagWeights': <String, double>{for (final String k in tagKeys) k: tagWeights[k]!},
-      'titleWeights': <String, double>{for (final String k in titleKeys) k: titleWeights[k]!},
+      'tagWeights': <String, double>{
+        for (final String k in tagKeys) k: tagWeights[k]!
+      },
+      'titleWeights': <String, double>{
+        for (final String k in titleKeys) k: titleWeights[k]!
+      },
       'tagPairs': tagPairs.map((AiXpTagPair p) => p.toJson()).toList(),
       'saturatedTags': saturated,
+      'summary': summary,
+      'preferences': preferences.map((AiXpPreference p) => p.toJson()).toList(),
+      'searchStrategies':
+          searchStrategies.map((AiXpSearchStrategy s) => s.toJson()).toList(),
+      'generatedByRemoteAi': generatedByRemoteAi,
     };
   }
 
@@ -210,6 +350,31 @@ class AiXpProfile {
       }
     }
 
+    final List<AiXpPreference> prefs = <AiXpPreference>[];
+    final Object? rawPrefs = json['preferences'];
+    if (rawPrefs is List) {
+      for (final Object? item in rawPrefs) {
+        if (item is Map<String, dynamic>) {
+          prefs.add(AiXpPreference.fromJson(item));
+        } else if (item is Map) {
+          prefs.add(AiXpPreference.fromJson(Map<String, dynamic>.from(item)));
+        }
+      }
+    }
+
+    final List<AiXpSearchStrategy> strategies = <AiXpSearchStrategy>[];
+    final Object? rawStrategies = json['searchStrategies'];
+    if (rawStrategies is List) {
+      for (final Object? item in rawStrategies) {
+        if (item is Map<String, dynamic>) {
+          strategies.add(AiXpSearchStrategy.fromJson(item));
+        } else if (item is Map) {
+          strategies.add(
+              AiXpSearchStrategy.fromJson(Map<String, dynamic>.from(item)));
+        }
+      }
+    }
+
     return AiXpProfile(
       version: (json['version'] as num?)?.toInt() ?? currentVersion,
       builtAtMs: (json['builtAtMs'] as num?)?.toInt() ?? 0,
@@ -225,13 +390,17 @@ class AiXpProfile {
               ?.map((e) => e.toString())
               .toList() ??
           const <String>[],
+      summary: json['summary'] as String?,
+      preferences: prefs,
+      searchStrategies: strategies,
+      generatedByRemoteAi: json['generatedByRemoteAi'] as bool? ?? false,
     );
   }
 }
 
 /// One explainable contribution to a ranked score.
 class AiXpScoreExplanation {
-  /// `tag`, `title`, `pair`, or `diversity`.
+  /// `tag`, `title`, `pair`, `diversity`, or `remote_ai`.
   final String kind;
   final String detail;
   final double contribution;
@@ -275,7 +444,8 @@ class AiXpRankedCandidate {
     return <String, dynamic>{
       'signal': signal.toJson(),
       'score': score,
-      'explanations': explanations.map((AiXpScoreExplanation e) => e.toJson()).toList(),
+      'explanations':
+          explanations.map((AiXpScoreExplanation e) => e.toJson()).toList(),
     };
   }
 
@@ -291,7 +461,8 @@ class AiXpRankedCandidate {
         if (item is Map<String, dynamic>) {
           explanations.add(AiXpScoreExplanation.fromJson(item));
         } else if (item is Map) {
-          explanations.add(AiXpScoreExplanation.fromJson(Map<String, dynamic>.from(item)));
+          explanations.add(
+              AiXpScoreExplanation.fromJson(Map<String, dynamic>.from(item)));
         }
       }
     }
@@ -438,7 +609,8 @@ class AiXpOrganizationPlan {
         if (item is Map<String, dynamic>) {
           rules.add(AiXpOrganizationRule.fromJson(item));
         } else if (item is Map) {
-          rules.add(AiXpOrganizationRule.fromJson(Map<String, dynamic>.from(item)));
+          rules.add(
+              AiXpOrganizationRule.fromJson(Map<String, dynamic>.from(item)));
         }
       }
     }
@@ -449,7 +621,8 @@ class AiXpOrganizationPlan {
         if (item is Map<String, dynamic>) {
           moves.add(AiXpOrganizationMove.fromJson(item));
         } else if (item is Map) {
-          moves.add(AiXpOrganizationMove.fromJson(Map<String, dynamic>.from(item)));
+          moves.add(
+              AiXpOrganizationMove.fromJson(Map<String, dynamic>.from(item)));
         }
       }
     }
@@ -519,10 +692,13 @@ class AiXpSearchIntent {
       minimumRating: (json['minimumRating'] as num?)?.toInt(),
       pageAtLeast: (json['pageAtLeast'] as num?)?.toInt(),
       pageAtMost: (json['pageAtMost'] as num?)?.toInt(),
-      categories: (json['categories'] as List<dynamic>?)?.map((e) => e.toString()).toList() ??
+      categories: (json['categories'] as List<dynamic>?)
+              ?.map((e) => e.toString())
+              .toList() ??
           const <String>[],
-      tags: (json['tags'] as List<dynamic>?)?.map((e) => e.toString()).toList() ??
-          const <String>[],
+      tags:
+          (json['tags'] as List<dynamic>?)?.map((e) => e.toString()).toList() ??
+              const <String>[],
       xpPreference: json['xpPreference'] as String?,
       residualKeyword: json['residualKeyword'] as String? ?? '',
     );

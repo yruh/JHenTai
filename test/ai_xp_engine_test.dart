@@ -143,6 +143,63 @@ void main() {
       expect(a.toJson(), b.toJson());
     });
 
+    test('v1 profile JSON loads with remote-field defaults', () {
+      final AiXpProfile profile = AiXpProfile.fromJson(<String, dynamic>{
+        'version': 1,
+        'builtAtMs': nowMs,
+        'signalCount': 1,
+        'sourceGids': <int>[10],
+        'tagWeights': <String, double>{'female:loli': 1.5},
+        'titleWeights': <String, double>{'archive': 0.8},
+        'tagPairs': <Map<String, dynamic>>[],
+        'saturatedTags': <String>[],
+      });
+
+      expect(profile.version, 1);
+      expect(profile.summary, isNull);
+      expect(profile.preferences, isEmpty);
+      expect(profile.searchStrategies, isEmpty);
+      expect(profile.generatedByRemoteAi, isFalse);
+    });
+
+    test('remote-enriched profile JSON and copyWith preserve remote fields', () {
+      final AiXpProfile original = AiXpProfile(
+        builtAtMs: nowMs,
+        signalCount: 3,
+        sourceGids: const <int>[1, 2, 3],
+        tagWeights: const <String, double>{'female:loli': 2},
+        summary: 'Readable preference summary',
+        preferences: <AiXpPreference>[
+          AiXpPreference(
+            name: 'Theme',
+            description: 'Strong recurring evidence',
+            confidence: 1.5,
+            evidenceTags: const <String>['female:loli'],
+          ),
+        ],
+        searchStrategies: const <AiXpSearchStrategy>[
+          AiXpSearchStrategy(
+            tags: <String>['female:loli'],
+            keyword: 'archive',
+            reason: 'Recurring preference',
+          ),
+        ],
+        generatedByRemoteAi: true,
+      );
+
+      expect(original.preferences.single.confidence, 1);
+      final AiXpProfile restored = AiXpProfile.fromJson(original.toJson());
+      expect(restored.toJson(), original.toJson());
+      expect(restored.generatedByRemoteAi, isTrue);
+      expect(restored.preferences.single.evidenceTags, <String>['female:loli']);
+      expect(restored.searchStrategies.single.keyword, 'archive');
+
+      final AiXpProfile copied = restored.copyWith(summary: 'Updated');
+      expect(copied.summary, 'Updated');
+      expect(copied.preferences, restored.preferences);
+      expect(copied.searchStrategies, restored.searchStrategies);
+    });
+
     test('small homogeneous library (N=2) keeps shared tags and titles', () {
       final AiXpProfile profile = engine.buildProfile(
         <AiGallerySignal>[

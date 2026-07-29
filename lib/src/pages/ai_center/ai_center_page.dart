@@ -44,7 +44,7 @@ class AiCenterPage extends StatelessWidget {
             builder: (_) => Padding(
               padding: const EdgeInsets.only(right: 4),
               child: Center(
-                child: _ModeChip(remote: aiSetting.isReady),
+                child: _ModeChip(ready: aiSetting.isReady),
               ),
             ),
           ),
@@ -68,7 +68,6 @@ class AiCenterPage extends StatelessWidget {
       body: Column(
         children: [
           _buildProgressBanner(context),
-          _buildFallbackBanner(context),
           Expanded(
             child: TabBarView(
               controller: logic.tabController,
@@ -112,42 +111,12 @@ class AiCenterPage extends StatelessWidget {
                 const SizedBox(height: 6),
                 LinearProgressIndicator(
                   value: determinate
-                      ? (progress.current / progress.total).clamp(0.0, 1.0).toDouble()
+                      ? (progress.current / progress.total)
+                          .clamp(0.0, 1.0)
+                          .toDouble()
                       : null,
                 ),
               ],
-            ),
-          ),
-        );
-      },
-    );
-  }
-
-  Widget _buildFallbackBanner(BuildContext context) {
-    return GetBuilder<AiCenterPageLogic>(
-      id: AiCenterPageLogic.modeId,
-      builder: (_) {
-        if (!state.showRemoteFallback) {
-          return const SizedBox.shrink();
-        }
-        return Material(
-          color: Theme.of(context).colorScheme.tertiaryContainer,
-          child: ListTile(
-            dense: true,
-            leading: Icon(
-              Icons.info_outline,
-              color: Theme.of(context).colorScheme.onTertiaryContainer,
-            ),
-            title: Text(
-              'aiRemoteFallback'.tr,
-              style: TextStyle(color: Theme.of(context).colorScheme.onTertiaryContainer),
-            ),
-            trailing: IconButton(
-              icon: const Icon(Icons.close, size: 18),
-              onPressed: () {
-                state.showRemoteFallback = false;
-                logic.update([AiCenterPageLogic.modeId]);
-              },
             ),
           ),
         );
@@ -199,7 +168,8 @@ class AiCenterPage extends StatelessWidget {
       decoration: BoxDecoration(
         color: UIConfig.backGroundColor(context),
         borderRadius: BorderRadius.circular(_cardRadius),
-        border: Border.all(color: Theme.of(context).dividerColor.withOpacity(0.5)),
+        border:
+            Border.all(color: Theme.of(context).dividerColor.withOpacity(0.5)),
       ),
       child: Padding(
         padding: const EdgeInsets.fromLTRB(12, 10, 12, 12),
@@ -211,7 +181,10 @@ class AiCenterPage extends StatelessWidget {
                 Expanded(
                   child: Text(
                     title,
-                    style: Theme.of(context).textTheme.titleSmall?.copyWith(fontWeight: FontWeight.w600),
+                    style: Theme.of(context)
+                        .textTheme
+                        .titleSmall
+                        ?.copyWith(fontWeight: FontWeight.w600),
                   ),
                 ),
                 if (actions != null) ...actions,
@@ -247,12 +220,14 @@ class AiCenterPage extends StatelessWidget {
     );
   }
 
-  Widget _emptyBox(BuildContext context, String message, {VoidCallback? onAction, String? actionLabel}) {
+  Widget _emptyBox(BuildContext context, String message,
+      {VoidCallback? onAction, String? actionLabel}) {
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 32),
       child: Column(
         children: [
-          Icon(Icons.inbox_outlined, size: 40, color: Theme.of(context).disabledColor),
+          Icon(Icons.inbox_outlined,
+              size: 40, color: Theme.of(context).disabledColor),
           const SizedBox(height: 12),
           Text(message, textAlign: TextAlign.center),
           if (onAction != null && actionLabel != null) ...[
@@ -264,6 +239,15 @@ class AiCenterPage extends StatelessWidget {
     );
   }
 
+  Widget _notConfiguredBox(BuildContext context) {
+    return _emptyBox(
+      context,
+      'aiNotConfigured'.tr,
+      onAction: logic.openSettingsDialog,
+      actionLabel: 'aiConfigureApiAction'.tr,
+    );
+  }
+
   // ---------------------------------------------------------------------------
   // Profile tab
   // ---------------------------------------------------------------------------
@@ -272,9 +256,10 @@ class AiCenterPage extends StatelessWidget {
     return GetBuilder<AiCenterPageLogic>(
       id: AiCenterPageLogic.profileId,
       builder: (_) {
+        final bool aiReady = logic.isAiReady;
         return _constrainedScroll(
           controller: logic.profileScrollController,
-          onRefresh: logic.refreshProfile,
+          onRefresh: aiReady ? logic.refreshProfile : null,
           children: [
             _sectionCard(
               context: context,
@@ -288,8 +273,9 @@ class AiCenterPage extends StatelessWidget {
                   )
                 else
                   IconButton(
-                    tooltip: 'refreshAiXp'.tr,
+                    tooltip: aiReady ? 'refreshAiXp'.tr : 'aiNotConfigured'.tr,
                     icon: const Icon(Icons.refresh, size: 20),
+                    // Always call refreshProfile: it snacks aiNotConfigured when API is not ready.
                     onPressed: logic.refreshProfile,
                   ),
               ],
@@ -302,13 +288,18 @@ class AiCenterPage extends StatelessWidget {
   }
 
   Widget _buildProfileBody(BuildContext context) {
-    if (state.profileLoadingState == LoadingState.loading && state.profile == null) {
+    if (!logic.isAiReady) {
+      return _notConfiguredBox(context);
+    }
+    if (state.profileLoadingState == LoadingState.loading &&
+        state.profile == null) {
       return const Padding(
         padding: EdgeInsets.symmetric(vertical: 24),
         child: Center(child: CircularProgressIndicator()),
       );
     }
-    if (state.profileLoadingState == LoadingState.error && state.profile == null) {
+    if (state.profileLoadingState == LoadingState.error &&
+        state.profile == null) {
       return _emptyBox(
         context,
         'aiOperationFailed'.tr,
@@ -317,60 +308,203 @@ class AiCenterPage extends StatelessWidget {
       );
     }
 
-    final AiXpProfile? profile = state.profile;
-    if (profile == null || profile.isEmpty) {
+    if (!state.hasProfile) {
       return _emptyBox(
         context,
         'aiXpEmpty'.tr,
-        onAction: state.profileLoadingState == LoadingState.loading ? null : logic.refreshProfile,
+        onAction: state.profileLoadingState == LoadingState.loading
+            ? null
+            : logic.refreshProfile,
         actionLabel: 'refreshAiXp'.tr,
       );
     }
 
+    final AiXpProfile profile = state.profile!;
     final String updatedAt = profile.builtAtMs > 0
-        ? DateFormat('yyyy-MM-dd HH:mm').format(DateTime.fromMillisecondsSinceEpoch(profile.builtAtMs))
+        ? DateFormat('yyyy-MM-dd HH:mm')
+            .format(DateTime.fromMillisecondsSinceEpoch(profile.builtAtMs))
         : '-';
 
-    final List<MapEntry<String, double>> topTags = logic.topWeighted(profile.tagWeights);
-    final List<MapEntry<String, double>> titleTerms = logic.topWeighted(profile.titleWeights);
+    final String cacheTime = state.favoriteCacheCapturedAtMs != null &&
+            state.favoriteCacheCapturedAtMs! > 0
+        ? DateFormat('yyyy-MM-dd HH:mm').format(
+            DateTime.fromMillisecondsSinceEpoch(
+                state.favoriteCacheCapturedAtMs!))
+        : '-';
+
+    final List<MapEntry<String, int>> topTags =
+        logic.topWeightedPercents(profile.tagWeights);
+    final List<MapEntry<String, int>> titleTerms =
+        logic.topWeightedPercents(profile.titleWeights);
     final List<AiXpTagPair> pairs = profile.tagPairs.take(20).toList();
+    final double maxPairWeight = pairs.isEmpty
+        ? 0
+        : pairs
+            .map((AiXpTagPair p) => p.weight)
+            .reduce((double a, double b) => a > b ? a : b);
+
+    final String summary = profile.summary?.trim() ?? '';
+    final List<AiXpPreference> preferences = profile.preferences;
+    final List<AiXpSearchStrategy> strategies = profile.searchStrategies;
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        Text('aiXpSourceCount'.trParams({'count': profile.signalCount.toString()})),
+        Text('aiXpSourceCount'
+            .trParams({'count': profile.signalCount.toString()})),
         const SizedBox(height: 4),
         Text('aiXpUpdatedAt'.trParams({'time': updatedAt})),
-        const SizedBox(height: 14),
-        Text('aiTopTags'.tr, style: Theme.of(context).textTheme.titleSmall),
-        const SizedBox(height: 6),
-        _chipWrap(
-          topTags.map((MapEntry<String, double> e) => '${e.key} (${e.value.toStringAsFixed(2)})').toList(),
-          context,
+        const SizedBox(height: 4),
+        Text(
+          'aiFavoriteCacheStatus'.trParams({
+            'count': state.favoriteCacheCount.toString(),
+            'time': cacheTime,
+          }),
         ),
-        const SizedBox(height: 14),
-        Text('aiTitlePreferences'.tr, style: Theme.of(context).textTheme.titleSmall),
-        const SizedBox(height: 6),
-        _chipWrap(
-          titleTerms.map((MapEntry<String, double> e) => '${e.key} (${e.value.toStringAsFixed(2)})').toList(),
-          context,
+        if (profile.generatedByRemoteAi) ...[
+          const SizedBox(height: 8),
+          Align(
+            alignment: Alignment.centerLeft,
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+              decoration: BoxDecoration(
+                color: Theme.of(context).colorScheme.primaryContainer,
+                borderRadius: BorderRadius.circular(6),
+              ),
+              child: Text(
+                'aiGeneratedRemotely'.tr,
+                style: Theme.of(context).textTheme.labelSmall?.copyWith(
+                      color: Theme.of(context).colorScheme.onPrimaryContainer,
+                    ),
+              ),
+            ),
+          ),
+        ],
+        if (summary.isNotEmpty) ...[
+          const SizedBox(height: 14),
+          Text('aiProfileSummary'.tr,
+              style: Theme.of(context).textTheme.titleSmall),
+          const SizedBox(height: 6),
+          Text(summary, style: Theme.of(context).textTheme.bodyMedium),
+        ],
+        if (preferences.isNotEmpty) ...[
+          const SizedBox(height: 14),
+          Text('aiPreferenceThemes'.tr,
+              style: Theme.of(context).textTheme.titleSmall),
+          const SizedBox(height: 8),
+          for (int i = 0; i < preferences.length; i++) ...[
+            if (i > 0) const SizedBox(height: 10),
+            _PreferenceThemeTile(
+              preference: preferences[i],
+              confidenceLabel:
+                  logic.confidencePercentLabel(preferences[i].confidence),
+            ),
+          ],
+        ],
+        if (strategies.isNotEmpty) ...[
+          const SizedBox(height: 14),
+          Text('aiRecommendedSearches'.tr,
+              style: Theme.of(context).textTheme.titleSmall),
+          const SizedBox(height: 8),
+          for (final AiXpSearchStrategy s in strategies) ...[
+            Text(
+              s.keyword.isNotEmpty
+                  ? s.keyword
+                  : (s.tags.isNotEmpty ? s.tags.join(', ') : '-'),
+              style: Theme.of(context).textTheme.titleSmall,
+              maxLines: 2,
+              overflow: TextOverflow.ellipsis,
+            ),
+            if (s.reason.isNotEmpty) ...[
+              const SizedBox(height: 2),
+              Text(
+                s.reason,
+                style: Theme.of(context).textTheme.bodySmall,
+                maxLines: 3,
+                overflow: TextOverflow.ellipsis,
+              ),
+            ],
+            if (s.tags.isNotEmpty) ...[
+              const SizedBox(height: 4),
+              _chipWrap(s.tags, context),
+            ],
+            const SizedBox(height: 8),
+          ],
+        ],
+        const SizedBox(height: 8),
+        Theme(
+          data: Theme.of(context).copyWith(dividerColor: Colors.transparent),
+          child: ExpansionTile(
+            tilePadding: EdgeInsets.zero,
+            childrenPadding: const EdgeInsets.only(top: 4, bottom: 4),
+            title: Text(
+              'aiAdvancedStats'.tr,
+              style: Theme.of(context)
+                  .textTheme
+                  .titleSmall
+                  ?.copyWith(fontWeight: FontWeight.w600),
+            ),
+            children: [
+              Align(
+                alignment: Alignment.centerLeft,
+                child: Text(
+                  'aiLocalStatsNotice'.tr,
+                  style: Theme.of(context).textTheme.bodySmall,
+                ),
+              ),
+              const SizedBox(height: 12),
+              Align(
+                alignment: Alignment.centerLeft,
+                child: Text('aiTopTags'.tr,
+                    style: Theme.of(context).textTheme.titleSmall),
+              ),
+              const SizedBox(height: 6),
+              _chipWrap(
+                topTags
+                    .map((MapEntry<String, int> e) => '${e.key} (${e.value}%)')
+                    .toList(),
+                context,
+              ),
+              const SizedBox(height: 14),
+              Align(
+                alignment: Alignment.centerLeft,
+                child: Text('aiTitlePreferences'.tr,
+                    style: Theme.of(context).textTheme.titleSmall),
+              ),
+              const SizedBox(height: 6),
+              _chipWrap(
+                titleTerms
+                    .map((MapEntry<String, int> e) => '${e.key} (${e.value}%)')
+                    .toList(),
+                context,
+              ),
+              const SizedBox(height: 14),
+              Align(
+                alignment: Alignment.centerLeft,
+                child: Text('aiTagPairs'.tr,
+                    style: Theme.of(context).textTheme.titleSmall),
+              ),
+              const SizedBox(height: 6),
+              _chipWrap(
+                pairs
+                    .map(
+                      (AiXpTagPair p) =>
+                          '${p.left} + ${p.right} (${logic.relativePercentLabel(p.weight, maxPairWeight)})',
+                    )
+                    .toList(),
+                context,
+              ),
+              const SizedBox(height: 14),
+              Align(
+                alignment: Alignment.centerLeft,
+                child: Text('aiSaturatedTags'.tr,
+                    style: Theme.of(context).textTheme.titleSmall),
+              ),
+              const SizedBox(height: 6),
+              _chipWrap(profile.saturatedTags, context),
+            ],
+          ),
         ),
-        const SizedBox(height: 14),
-        Text('aiTagPairs'.tr, style: Theme.of(context).textTheme.titleSmall),
-        const SizedBox(height: 6),
-        _chipWrap(
-          pairs
-              .map(
-                (AiXpTagPair p) =>
-                    '${p.left} + ${p.right} (${p.weight.toStringAsFixed(2)})',
-              )
-              .toList(),
-          context,
-        ),
-        const SizedBox(height: 14),
-        Text('aiSaturatedTags'.tr, style: Theme.of(context).textTheme.titleSmall),
-        const SizedBox(height: 6),
-        _chipWrap(profile.saturatedTags, context),
       ],
     );
   }
@@ -383,6 +517,7 @@ class AiCenterPage extends StatelessWidget {
     return GetBuilder<AiCenterPageLogic>(
       id: AiCenterPageLogic.recommendId,
       builder: (_) {
+        final bool aiReady = logic.isAiReady;
         return _constrainedScroll(
           controller: logic.recommendScrollController,
           onRefresh: null,
@@ -393,11 +528,15 @@ class AiCenterPage extends StatelessWidget {
                 Expanded(
                   child: Text(
                     'aiRecommendations'.tr,
-                    style: Theme.of(context).textTheme.titleSmall?.copyWith(fontWeight: FontWeight.w600),
+                    style: Theme.of(context)
+                        .textTheme
+                        .titleSmall
+                        ?.copyWith(fontWeight: FontWeight.w600),
                   ),
                 ),
                 FilledButton.tonal(
-                  onPressed: state.recommendLoadingState == LoadingState.loading
+                  onPressed: !aiReady ||
+                          state.recommendLoadingState == LoadingState.loading
                       ? null
                       : logic.generateRecommendations,
                   child: state.recommendLoadingState == LoadingState.loading
@@ -419,7 +558,11 @@ class AiCenterPage extends StatelessWidget {
   }
 
   Widget _buildRecommendBody(BuildContext context) {
-    if (state.recommendLoadingState == LoadingState.loading && state.recommendations.isEmpty) {
+    if (!logic.isAiReady) {
+      return _notConfiguredBox(context);
+    }
+    if (state.recommendLoadingState == LoadingState.loading &&
+        state.recommendations.isEmpty) {
       return const Padding(
         padding: EdgeInsets.symmetric(vertical: 24),
         child: Center(child: CircularProgressIndicator()),
@@ -429,15 +572,22 @@ class AiCenterPage extends StatelessWidget {
       return _emptyBox(
         context,
         'aiNeedProfile'.tr,
-        onAction: state.profileLoadingState == LoadingState.loading ? null : logic.refreshProfile,
-        actionLabel: 'refreshAiXp'.tr,
+        onAction: !logic.isAiReady ||
+                state.profileLoadingState == LoadingState.loading
+            ? logic.isAiReady
+                ? null
+                : logic.openSettingsDialog
+            : logic.refreshProfile,
+        actionLabel:
+            logic.isAiReady ? 'refreshAiXp'.tr : 'aiConfigureApiAction'.tr,
       );
     }
     if (state.recommendations.isEmpty) {
       return _emptyBox(
         context,
         'noAiRecommendations'.tr,
-        onAction: state.recommendLoadingState == LoadingState.loading
+        onAction: !logic.isAiReady ||
+                state.recommendLoadingState == LoadingState.loading
             ? null
             : logic.generateRecommendations,
         actionLabel: 'generateAiRecommendations'.tr,
@@ -465,10 +615,14 @@ class AiCenterPage extends StatelessWidget {
     return GetBuilder<AiCenterPageLogic>(
       id: AiCenterPageLogic.manageId,
       builder: (_) {
-        final bool orgBusy = state.organizationLoadingState == LoadingState.loading ||
-            state.organizationApplyLoadingState == LoadingState.loading;
-        final bool dupBusy = state.duplicateLoadingState == LoadingState.loading ||
-            state.duplicateApplyLoadingState == LoadingState.loading;
+        final bool aiReady = logic.isAiReady;
+        final bool orgBusy =
+            state.organizationLoadingState == LoadingState.loading ||
+                state.organizationApplyLoadingState == LoadingState.loading;
+        final bool dupBusy =
+            state.duplicateLoadingState == LoadingState.loading ||
+                state.duplicateApplyLoadingState == LoadingState.loading;
+        final bool orgEnabled = aiReady && state.hasProfile && !orgBusy;
 
         return _constrainedScroll(
           controller: logic.manageScrollController,
@@ -480,7 +634,28 @@ class AiCenterPage extends StatelessWidget {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
-                  if (!state.hasProfile)
+                  if (!aiReady)
+                    Padding(
+                      padding: const EdgeInsets.only(bottom: 8),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.stretch,
+                        children: [
+                          Text(
+                            'aiNotConfigured'.tr,
+                            style: Theme.of(context).textTheme.bodySmall,
+                          ),
+                          const SizedBox(height: 8),
+                          Align(
+                            alignment: Alignment.centerLeft,
+                            child: TextButton(
+                              onPressed: logic.openSettingsDialog,
+                              child: Text('aiConfigureApiAction'.tr),
+                            ),
+                          ),
+                        ],
+                      ),
+                    )
+                  else if (!state.hasProfile)
                     Padding(
                       padding: const EdgeInsets.only(bottom: 8),
                       child: Text(
@@ -492,7 +667,7 @@ class AiCenterPage extends StatelessWidget {
                     controller: logic.organizationController,
                     minLines: 2,
                     maxLines: 4,
-                    enabled: state.hasProfile && !orgBusy,
+                    enabled: orgEnabled,
                     decoration: InputDecoration(
                       border: const OutlineInputBorder(),
                       isDense: true,
@@ -503,7 +678,7 @@ class AiCenterPage extends StatelessWidget {
                   Align(
                     alignment: Alignment.centerRight,
                     child: FilledButton.tonal(
-                      onPressed: !state.hasProfile || orgBusy ? null : logic.previewOrganization,
+                      onPressed: orgEnabled ? logic.previewOrganization : null,
                       child: orgBusy
                           ? const SizedBox(
                               width: 16,
@@ -553,6 +728,7 @@ class AiCenterPage extends StatelessWidget {
     return GetBuilder<AiCenterPageLogic>(
       id: AiCenterPageLogic.searchId,
       builder: (_) {
+        final bool aiReady = logic.isAiReady;
         final bool busy = state.searchLoadingState == LoadingState.loading;
         return _constrainedScroll(
           controller: logic.searchScrollController,
@@ -564,13 +740,32 @@ class AiCenterPage extends StatelessWidget {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
+                  if (!aiReady) ...[
+                    Text(
+                      'aiNotConfigured'.tr,
+                      style: Theme.of(context).textTheme.bodySmall,
+                    ),
+                    const SizedBox(height: 8),
+                    Align(
+                      alignment: Alignment.centerLeft,
+                      child: TextButton(
+                        onPressed: logic.openSettingsDialog,
+                        child: Text('aiConfigureApiAction'.tr),
+                      ),
+                    ),
+                    const SizedBox(height: 10),
+                  ],
                   TextField(
                     controller: logic.searchController,
                     minLines: 1,
                     maxLines: 3,
-                    enabled: !busy,
+                    enabled: aiReady && !busy,
                     textInputAction: TextInputAction.search,
-                    onSubmitted: (_) => logic.runEnhancedSearch(),
+                    onSubmitted: (_) {
+                      if (aiReady) {
+                        logic.runEnhancedSearch();
+                      }
+                    },
                     decoration: InputDecoration(
                       border: const OutlineInputBorder(),
                       isDense: true,
@@ -581,7 +776,8 @@ class AiCenterPage extends StatelessWidget {
                   Align(
                     alignment: Alignment.centerRight,
                     child: FilledButton(
-                      onPressed: busy ? null : logic.runEnhancedSearch,
+                      onPressed:
+                          !aiReady || busy ? null : logic.runEnhancedSearch,
                       child: busy
                           ? const SizedBox(
                               width: 16,
@@ -602,26 +798,102 @@ class AiCenterPage extends StatelessWidget {
 }
 
 class _ModeChip extends StatelessWidget {
-  final bool remote;
+  final bool ready;
 
-  const _ModeChip({required this.remote});
+  const _ModeChip({required this.ready});
 
   @override
   Widget build(BuildContext context) {
-    final String label = remote ? 'remoteAiMode'.tr : 'localAiMode'.tr;
+    final String label = ready ? 'remoteAiMode'.tr : 'aiNotConfigured'.tr;
     final ColorScheme scheme = Theme.of(context).colorScheme;
     return Container(
+      constraints: const BoxConstraints(maxWidth: 120),
       padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
       decoration: BoxDecoration(
-        color: remote ? scheme.primaryContainer : scheme.surfaceContainerHighest,
+        color: ready ? scheme.primaryContainer : scheme.surfaceContainerHighest,
         borderRadius: BorderRadius.circular(6),
       ),
       child: Text(
         label,
+        maxLines: 1,
+        overflow: TextOverflow.ellipsis,
         style: Theme.of(context).textTheme.labelSmall?.copyWith(
-              color: remote ? scheme.onPrimaryContainer : scheme.onSurfaceVariant,
+              color:
+                  ready ? scheme.onPrimaryContainer : scheme.onSurfaceVariant,
             ),
       ),
+    );
+  }
+}
+
+class _PreferenceThemeTile extends StatelessWidget {
+  final AiXpPreference preference;
+  final String confidenceLabel;
+
+  const _PreferenceThemeTile({
+    required this.preference,
+    required this.confidenceLabel,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final TextTheme textTheme = Theme.of(context).textTheme;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Expanded(
+              child: Text(
+                preference.name,
+                style:
+                    textTheme.titleSmall?.copyWith(fontWeight: FontWeight.w600),
+                maxLines: 2,
+                overflow: TextOverflow.ellipsis,
+              ),
+            ),
+            const SizedBox(width: 8),
+            Text(
+              confidenceLabel,
+              style: textTheme.labelMedium?.copyWith(
+                color: Theme.of(context).colorScheme.primary,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+          ],
+        ),
+        if (preference.description.trim().isNotEmpty) ...[
+          const SizedBox(height: 4),
+          Text(
+            preference.description,
+            style: textTheme.bodySmall,
+          ),
+        ],
+        if (preference.evidenceTags.isNotEmpty) ...[
+          const SizedBox(height: 6),
+          Text('aiEvidenceTags'.tr, style: textTheme.labelSmall),
+          const SizedBox(height: 4),
+          Wrap(
+            spacing: 6,
+            runSpacing: 6,
+            children: preference.evidenceTags
+                .map(
+                  (String tag) => Container(
+                    padding:
+                        const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                    decoration: BoxDecoration(
+                      color:
+                          Theme.of(context).colorScheme.surfaceContainerHighest,
+                      borderRadius: BorderRadius.circular(6),
+                    ),
+                    child: Text(tag, style: textTheme.bodySmall),
+                  ),
+                )
+                .toList(),
+          ),
+        ],
+      ],
     );
   }
 }
@@ -639,7 +911,7 @@ class _RecommendationTile extends StatelessWidget {
   Widget build(BuildContext context) {
     final Gallery gallery = recommendation.gallery;
     final String scoreText = 'aiRecommendationScore'.trParams({
-      'score': recommendation.score.toStringAsFixed(2),
+      'score': recommendation.score.round().toString(),
     });
 
     return Material(
@@ -651,7 +923,8 @@ class _RecommendationTile extends StatelessWidget {
         child: Container(
           decoration: BoxDecoration(
             borderRadius: BorderRadius.circular(8),
-            border: Border.all(color: Theme.of(context).dividerColor.withOpacity(0.5)),
+            border: Border.all(
+                color: Theme.of(context).dividerColor.withOpacity(0.5)),
           ),
           padding: const EdgeInsets.all(8),
           child: Row(
@@ -678,16 +951,15 @@ class _RecommendationTile extends StatelessWidget {
                       style: Theme.of(context).textTheme.titleSmall,
                     ),
                     const SizedBox(height: 4),
-                    Row(
+                    Wrap(
+                      spacing: 8,
+                      runSpacing: 4,
+                      crossAxisAlignment: WrapCrossAlignment.center,
                       children: [
                         EHGalleryCategoryTag(category: gallery.category),
-                        const SizedBox(width: 8),
-                        Flexible(
-                          child: Text(
-                            scoreText,
-                            style: Theme.of(context).textTheme.bodySmall,
-                            overflow: TextOverflow.ellipsis,
-                          ),
+                        Text(
+                          scoreText,
+                          style: Theme.of(context).textTheme.bodySmall,
                         ),
                       ],
                     ),
@@ -700,7 +972,7 @@ class _RecommendationTile extends StatelessWidget {
                       const SizedBox(height: 2),
                       ...recommendation.explanations.take(3).map(
                             (AiXpScoreExplanation e) => Text(
-                              '- ${e.detail.isNotEmpty ? e.detail : e.kind} (${e.contribution.toStringAsFixed(2)})',
+                              '- ${e.detail.isNotEmpty ? e.detail : e.kind}',
                               maxLines: 1,
                               overflow: TextOverflow.ellipsis,
                               style: Theme.of(context).textTheme.bodySmall,

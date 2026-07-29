@@ -7,6 +7,11 @@ class AiCenterPageState {
   /// Persisted / last-built XP profile.
   AiXpProfile? profile;
 
+  /// Hydrated from [AiXpService] favorite-cache getters (not from profile JSON).
+  int favoriteCacheCount = 0;
+  int? favoriteCacheCapturedAtMs;
+  bool hasFavoriteCache = false;
+
   LoadingState profileLoadingState = LoadingState.idle;
   LoadingState recommendLoadingState = LoadingState.idle;
   LoadingState organizationLoadingState = LoadingState.idle;
@@ -28,10 +33,16 @@ class AiCenterPageState {
   /// Latest progress snapshot for the active long-running op.
   AiXpProgress? progress;
 
-  /// True when the last remote-capable op fell back to local.
-  bool showRemoteFallback = false;
-
-  bool get hasProfile => profile != null && !profile!.isEmpty;
+  bool get hasProfile {
+    final AiXpProfile? p = profile;
+    if (p == null || !p.generatedByRemoteAi) {
+      return false;
+    }
+    if ((p.summary?.trim().isNotEmpty ?? false)) {
+      return true;
+    }
+    return p.preferences.isNotEmpty || p.searchStrategies.isNotEmpty;
+  }
 
   bool get isBusy =>
       profileLoadingState == LoadingState.loading ||

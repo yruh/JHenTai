@@ -20,7 +20,8 @@ import 'package:jhentai/src/utils/toast_util.dart';
 import 'package:jhentai/src/widget/eh_alert_dialog.dart';
 import 'package:jhentai/src/widget/loading_state_indicator.dart';
 
-class AiCenterPageLogic extends GetxController with GetSingleTickerProviderStateMixin {
+class AiCenterPageLogic extends GetxController
+    with GetSingleTickerProviderStateMixin {
   final AiCenterPageState state = AiCenterPageState();
 
   static const String pageId = 'aiCenterPageId';
@@ -95,14 +96,6 @@ class AiCenterPageLogic extends GetxController with GetSingleTickerProviderState
     }
   }
 
-  void _noteRemoteFallback(bool remoteFallback) {
-    if (remoteFallback) {
-      state.showRemoteFallback = true;
-      snack('aiCenter'.tr, 'aiRemoteFallback'.tr, isShort: true);
-    }
-    updateSafely([modeId, pageId]);
-  }
-
   void _handleError(String context, Object e, [StackTrace? s]) {
     if (e is DioException) {
       log.error(context, e.errorMsg, e.stackTrace);
@@ -114,7 +107,9 @@ class AiCenterPageLogic extends GetxController with GetSingleTickerProviderState
   }
 
   String favoriteCategoryName(int? index, {String? fallback}) {
-    if (index != null && index >= 0 && index < favoriteSetting.favoriteTagNames.length) {
+    if (index != null &&
+        index >= 0 &&
+        index < favoriteSetting.favoriteTagNames.length) {
       return favoriteSetting.favoriteTagNames[index];
     }
     if (fallback != null && fallback.isNotEmpty) {
@@ -123,7 +118,8 @@ class AiCenterPageLogic extends GetxController with GetSingleTickerProviderState
     return '-';
   }
 
-  List<MapEntry<String, double>> topWeighted(Map<String, double> weights, {int limit = 20}) {
+  List<MapEntry<String, double>> topWeighted(Map<String, double> weights,
+      {int limit = 20}) {
     final List<MapEntry<String, double>> entries = weights.entries.toList()
       ..sort((MapEntry<String, double> a, MapEntry<String, double> b) {
         final int byWeight = b.value.compareTo(a.value);
@@ -136,6 +132,58 @@ class AiCenterPageLogic extends GetxController with GetSingleTickerProviderState
       return entries;
     }
     return entries.sublist(0, limit);
+  }
+
+  /// Normalize raw weights to relative percentages of the strongest entry (0–100).
+  List<MapEntry<String, int>> topWeightedPercents(Map<String, double> weights,
+      {int limit = 20}) {
+    final List<MapEntry<String, double>> top =
+        topWeighted(weights, limit: limit);
+    if (top.isEmpty) {
+      return const <MapEntry<String, int>>[];
+    }
+    final double max = top.first.value;
+    if (max <= 0) {
+      return top
+          .map((MapEntry<String, double> e) => MapEntry<String, int>(e.key, 0))
+          .toList();
+    }
+    return top
+        .map(
+          (MapEntry<String, double> e) => MapEntry<String, int>(
+            e.key,
+            ((e.value / max) * 100).round().clamp(0, 100),
+          ),
+        )
+        .toList();
+  }
+
+  /// Relative percent label for a raw score against [maxValue].
+  String relativePercentLabel(double value, double maxValue) {
+    if (maxValue <= 0) {
+      return '0%';
+    }
+    return '${((value / maxValue) * 100).round().clamp(0, 100)}%';
+  }
+
+  String confidencePercentLabel(double confidence) {
+    final double c = confidence.isNaN ? 0 : confidence.clamp(0.0, 1.0);
+    return '${(c * 100).round()}%';
+  }
+
+  void _hydrateFavoriteCacheInfo() {
+    state.favoriteCacheCount = aiXpService.favoriteCacheCount;
+    state.favoriteCacheCapturedAtMs = aiXpService.favoriteCacheCapturedAtMs;
+    state.hasFavoriteCache = aiXpService.hasFavoriteCache;
+  }
+
+  /// Returns false and snacks when remote AI API is not configured.
+  bool _requireAiReady({String? title}) {
+    if (aiSetting.isReady) {
+      return true;
+    }
+    snack(title ?? 'aiCenter'.tr, 'aiNotConfigured'.tr, isShort: true);
+    return false;
   }
 
   // ---------------------------------------------------------------------------
@@ -153,8 +201,10 @@ class AiCenterPageLogic extends GetxController with GetSingleTickerProviderState
     try {
       final AiXpProfile? profile = await aiXpService.loadProfile();
       state.profile = profile;
-      state.profileLoadingState =
-          profile == null || profile.isEmpty ? LoadingState.noData : LoadingState.success;
+      _hydrateFavoriteCacheInfo();
+      state.profileLoadingState = profile == null || !state.hasProfile
+          ? LoadingState.noData
+          : LoadingState.success;
     } catch (e, s) {
       state.profileLoadingState = LoadingState.error;
       _handleError('load AI XP profile failed', e, s);
@@ -168,16 +218,23 @@ class AiCenterPageLogic extends GetxController with GetSingleTickerProviderState
     if (state.profileLoadingState == LoadingState.loading) {
       return;
     }
+    if (!_requireAiReady(title: 'aiXpProfile'.tr)) {
+      return;
+    }
 
     state.profileLoadingState = LoadingState.loading;
-    state.showRemoteFallback = false;
-    updateSafely([profileId, recommendId, manageId, progressId, pageId, modeId]);
+    updateSafely(
+        [profileId, recommendId, manageId, progressId, pageId, modeId]);
 
     try {
-      final AiXpAnalysisResult result = await aiXpService.analyzeFavorites(onProgress: _onProgress);
+      final AiXpAnalysisResult result = await aiXpService.analyzeFavorites(
+        forceRefresh: true,
+        onProgress: _onProgress,
+      );
       state.profile = result.profile;
+      _hydrateFavoriteCacheInfo();
       state.profileLoadingState =
-          result.profile.isEmpty ? LoadingState.noData : LoadingState.success;
+          !state.hasProfile ? LoadingState.noData : LoadingState.success;
       _invalidateRecommendations();
       toast('aiProfileBuilt'.tr);
     } catch (e, s) {
@@ -196,8 +253,9 @@ class AiCenterPageLogic extends GetxController with GetSingleTickerProviderState
 
   void _syncProfileAfterMutation() {
     state.profile = aiXpService.cachedProfile ?? state.profile;
+    _hydrateFavoriteCacheInfo();
     state.profileLoadingState =
-        state.profile == null || state.profile!.isEmpty ? LoadingState.noData : LoadingState.success;
+        !state.hasProfile ? LoadingState.noData : LoadingState.success;
     _invalidateRecommendations();
   }
 
@@ -209,6 +267,9 @@ class AiCenterPageLogic extends GetxController with GetSingleTickerProviderState
     if (state.recommendLoadingState == LoadingState.loading) {
       return;
     }
+    if (!_requireAiReady(title: 'aiRecommendations'.tr)) {
+      return;
+    }
     if (!state.hasProfile) {
       snack('aiRecommendations'.tr, 'aiNeedProfile'.tr, isShort: true);
       return;
@@ -216,11 +277,11 @@ class AiCenterPageLogic extends GetxController with GetSingleTickerProviderState
 
     state.recommendLoadingState = LoadingState.loading;
     state.recommendations = <AiXpRecommendation>[];
-    state.showRemoteFallback = false;
     updateSafely([recommendId, progressId, pageId, modeId]);
 
     try {
-      final List<AiXpRecommendation> results = await aiXpService.generateRecommendations(
+      final List<AiXpRecommendation> results =
+          await aiXpService.generateRecommendations(
         profile: state.profile,
         onProgress: _onProgress,
       );
@@ -239,7 +300,8 @@ class AiCenterPageLogic extends GetxController with GetSingleTickerProviderState
   void openGallery(Gallery gallery) {
     toRoute(
       Routes.details,
-      arguments: DetailsPageArgument(galleryUrl: gallery.galleryUrl, gallery: gallery),
+      arguments:
+          DetailsPageArgument(galleryUrl: gallery.galleryUrl, gallery: gallery),
     );
   }
 
@@ -252,8 +314,12 @@ class AiCenterPageLogic extends GetxController with GetSingleTickerProviderState
         state.organizationApplyLoadingState == LoadingState.loading) {
       return;
     }
+    if (!_requireAiReady(title: 'aiFavoriteOrganizer'.tr)) {
+      return;
+    }
     if (!state.hasProfile) {
-      snack('aiFavoriteOrganizer'.tr, 'organizationRequirement'.tr, isShort: true);
+      snack('aiFavoriteOrganizer'.tr, 'organizationRequirement'.tr,
+          isShort: true);
       return;
     }
 
@@ -261,11 +327,11 @@ class AiCenterPageLogic extends GetxController with GetSingleTickerProviderState
     state.organizationLoadingState = LoadingState.loading;
     state.organizationPlan = null;
     state.selectedMoveGids.clear();
-    state.showRemoteFallback = false;
     updateSafely([manageId, progressId, pageId, modeId]);
 
     try {
-      final AiXpOrganizationPlanResult result = await aiXpService.planOrganization(
+      final AiXpOrganizationPlanResult result =
+          await aiXpService.planOrganization(
         requirements,
         onProgress: _onProgress,
       );
@@ -274,19 +340,21 @@ class AiCenterPageLogic extends GetxController with GetSingleTickerProviderState
         ..clear()
         ..addAll(result.plan.moves.map((AiXpOrganizationMove m) => m.gid));
       state.organizationLoadingState = LoadingState.success;
-      _noteRemoteFallback(result.remoteFallback);
       _clearProgress();
 
       if (result.plan.rules.isEmpty && result.plan.moves.isEmpty) {
-        snack('aiFavoriteOrganizer'.tr, 'noOrganizationRules'.tr, isShort: true);
+        snack('aiFavoriteOrganizer'.tr, 'noOrganizationRules'.tr,
+            isShort: true);
         return;
       }
       if (result.plan.moves.isEmpty) {
-        snack('aiFavoriteOrganizer'.tr, 'noOrganizationChanges'.tr, isShort: true);
+        snack('aiFavoriteOrganizer'.tr, 'noOrganizationChanges'.tr,
+            isShort: true);
         return;
       }
 
-      final List<AiXpOrganizationMove>? selected = await Get.dialog<List<AiXpOrganizationMove>>(
+      final List<AiXpOrganizationMove>? selected =
+          await Get.dialog<List<AiXpOrganizationMove>>(
         AiOrganizationPreviewDialog(
           planResult: result,
           initiallySelectedGids: Set<int>.from(state.selectedMoveGids),
@@ -356,7 +424,7 @@ class AiCenterPageLogic extends GetxController with GetSingleTickerProviderState
   }
 
   // ---------------------------------------------------------------------------
-  // Duplicates
+  // Duplicates (local deterministic tooling — available without remote AI)
   // ---------------------------------------------------------------------------
 
   Future<void> scanDuplicates() async {
@@ -371,7 +439,8 @@ class AiCenterPageLogic extends GetxController with GetSingleTickerProviderState
     updateSafely([manageId, progressId, pageId]);
 
     try {
-      final AiXpDuplicatePlanResult result = await aiXpService.planDuplicates(onProgress: _onProgress);
+      final AiXpDuplicatePlanResult result =
+          await aiXpService.planDuplicates(onProgress: _onProgress);
       state.duplicatePlan = result;
       state.selectedDuplicateKeeperGids
         ..clear()
@@ -385,10 +454,12 @@ class AiCenterPageLogic extends GetxController with GetSingleTickerProviderState
         return;
       }
 
-      final List<AiXpDuplicateGroup>? selected = await Get.dialog<List<AiXpDuplicateGroup>>(
+      final List<AiXpDuplicateGroup>? selected =
+          await Get.dialog<List<AiXpDuplicateGroup>>(
         AiDuplicatePreviewDialog(
           planResult: result,
-          initiallySelectedKeeperGids: Set<int>.from(state.selectedDuplicateKeeperGids),
+          initiallySelectedKeeperGids:
+              Set<int>.from(state.selectedDuplicateKeeperGids),
         ),
       );
       if (selected == null) {
@@ -468,6 +539,9 @@ class AiCenterPageLogic extends GetxController with GetSingleTickerProviderState
     if (state.searchLoadingState == LoadingState.loading) {
       return;
     }
+    if (!_requireAiReady(title: 'enhancedAiSearch'.tr)) {
+      return;
+    }
 
     final String query = searchController.text.trim();
     if (query.isEmpty) {
@@ -475,18 +549,18 @@ class AiCenterPageLogic extends GetxController with GetSingleTickerProviderState
     }
 
     state.searchLoadingState = LoadingState.loading;
-    state.showRemoteFallback = false;
     updateSafely([searchId, progressId, pageId, modeId]);
 
     try {
-      final AiXpEnhancedSearchResult result = await aiXpService.buildEnhancedSearch(
+      final AiXpEnhancedSearchResult result =
+          await aiXpService.buildEnhancedSearch(
         query,
         profile: state.profile,
         onProgress: _onProgress,
       );
       state.searchLoadingState = LoadingState.success;
-      _noteRemoteFallback(result.remoteFallback);
-      await newSearch(rewriteSearchConfig: result.searchConfig, forceNewRoute: true);
+      await newSearch(
+          rewriteSearchConfig: result.searchConfig, forceNewRoute: true);
     } catch (e, s) {
       state.searchLoadingState = LoadingState.error;
       _handleError('enhanced AI search failed', e, s);
@@ -507,11 +581,12 @@ class AiCenterPageLogic extends GetxController with GetSingleTickerProviderState
       if (aiSetting.enabled.value && !aiSetting.isReady) {
         snack('aiSettings'.tr, 'aiNotConfigured'.tr, isShort: true);
       }
-      updateSafely([modeId, pageId]);
+      updateSafely(
+          [modeId, pageId, profileId, recommendId, manageId, searchId]);
     } else {
-      updateSafely([modeId]);
+      updateSafely([modeId, pageId]);
     }
   }
 
-  bool get isRemoteMode => aiSetting.isReady;
+  bool get isAiReady => aiSetting.isReady;
 }

@@ -41,6 +41,7 @@ enum ConfigEnum {
   myTagsSetting('MyTagsSetting'),
   builtInBlockedUser('builtInBlockedUser'),
   aiXpProfile('aiXpProfile'),
+  aiFavoriteSnapshot('aiFavoriteSnapshot'),
 
   /// page config
   downloadPageBodyType('downloadPageGalleryType'),
