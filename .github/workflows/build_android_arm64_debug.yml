@@ -1,0 +1,45 @@
+name: Build Android ARM64 Debug APK
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Set up Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: 3.44.8
+          channel: master
+          cache: true
+
+      - name: Resolve dependencies
+        run: flutter pub get
+
+      - name: Build ARM64 debug APK
+        run: flutter build apk --debug --target-platform android-arm64 --split-per-abi -t lib/src/main.dart
+
+      - name: Name artifact
+        shell: bash
+        run: cp build/app/outputs/flutter-apk/app-arm64-v8a-debug.apk "JHenTai-${GITHUB_SHA::7}-arm64-v8a-debug.apk"
+
+      - name: Upload APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: JHenTai-Android-arm64-v8a-debug
+          path: JHenTai-*-arm64-v8a-debug.apk
+          if-no-files-found: error
+          retention-days: 30

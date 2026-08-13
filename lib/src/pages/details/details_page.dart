@@ -1,3 +1,4 @@
+import 'package:flutter/rendering.dart';
 import 'dart:math';
 
 import 'package:animate_do/animate_do.dart';
@@ -5,7 +6,6 @@ import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/scheduler.dart';
 import 'package:flutter_rating_bar/flutter_rating_bar.dart';
-import 'package:font_awesome_flutter/font_awesome_flutter.dart';
 import 'package:get/get.dart';
 import 'package:jhentai/src/config/ui_config.dart';
 import 'package:jhentai/src/enum/eh_namespace.dart';
@@ -32,7 +32,7 @@ import 'package:jhentai/src/widget/loading_state_indicator.dart';
 import '../../database/database.dart';
 import '../../mixin/scroll_to_top_logic_mixin.dart';
 import '../../mixin/scroll_to_top_state_mixin.dart';
-import '../../service/gallery_download_service.dart';
+import '../../service/gallery_download/gallery_download_service.dart';
 import '../../setting/preference_setting.dart';
 import '../../setting/style_setting.dart';
 import '../../utils/date_util.dart';
@@ -115,7 +115,7 @@ class DetailsPage extends StatelessWidget with Scroll2TopPageMixin {
                         value: 0,
                         child: Row(
                           mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                          children: [Text('jump'.tr), const Icon(FontAwesomeIcons.paperPlane, size: 20)],
+                          children: [Text('jump'.tr), Icon(Icons.send, size: 20)],
                         ),
                       ),
                     PopupMenuItem(
@@ -141,7 +141,7 @@ class DetailsPage extends StatelessWidget with Scroll2TopPageMixin {
                           children: [Text('delete'.tr), const Icon(Icons.delete)],
                         ),
                       ),
-                    if (state.galleryDetails?.parentGalleryUrl != null || (state.galleryDetails?.childrenGallerys?.isNotEmpty ?? false))
+                    if (state.galleryDetails?.parentGalleryUrl != null || (state.galleryDetails?.childrenGalleries?.isNotEmpty ?? false))
                       PopupMenuItem(
                         value: 4,
                         child: Row(
@@ -210,7 +210,7 @@ class DetailsPage extends StatelessWidget with Scroll2TopPageMixin {
           physics: const BouncingScrollPhysics(parent: AlwaysScrollableScrollPhysics()),
           scrollBehavior: UIConfig.scrollBehaviourWithScrollBarWithMouse,
           controller: state.scrollController,
-          cacheExtent: 5000,
+          scrollCacheExtent: ScrollCacheExtent.pixels(5000),
           slivers: [
             CupertinoSliverRefreshControl(onRefresh: logic.handleRefresh),
             if (preferenceSetting.showAllGalleryTitles.isTrue) _buildSubTitle(context),
@@ -1383,7 +1383,7 @@ class DetailsPage extends StatelessWidget with Scroll2TopPageMixin {
                         });
                       }
 
-                      GalleryImage? downloadedImage = galleryDownloadService.galleryDownloadInfos[state.galleryUrl.gid]?.images[index];
+                      GalleryImage? downloadedImage = galleryDownloadService.galleryDownloadInfos[state.galleryUrl.gid]?.imageAtSync(index);
 
                       return Column(
                         children: [

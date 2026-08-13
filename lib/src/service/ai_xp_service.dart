@@ -341,7 +341,7 @@ class AiXpService {
           searchConfig: config,
           parser: EHSpiderParser.galleryPage2GalleryPageInfo,
         );
-        for (final Gallery gallery in page.gallerys) {
+        for (final Gallery gallery in page.galleries) {
           if (excluded.contains(gallery.gid) || gallery.isFavorite) {
             continue;
           }
@@ -933,7 +933,7 @@ class AiXpService {
         rethrow;
       }
 
-      for (final Gallery gallery in page.gallerys) {
+      for (final Gallery gallery in page.galleries) {
         if (seenGids.add(gallery.gid)) {
           all.add(gallery);
         }

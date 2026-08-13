@@ -1,3 +1,4 @@
+import 'package:flutter/rendering.dart';
 import 'package:collection/collection.dart';
 import 'package:extended_image/extended_image.dart';
 import 'package:flutter/material.dart';
@@ -61,7 +62,7 @@ class MobileLayoutPageV2 extends StatelessWidget {
                     key: const PageStorageKey('leftDrawer'),
                     controller: state.scrollController,
                     itemCount: state.icons.length,
-                    cacheExtent: 1000,
+                    scrollCacheExtent: ScrollCacheExtent.pixels(1000),
                     itemBuilder: (context, index) => ListTile(
                       dense: true,
                       title: Text(state.icons[index].name.name.tr, style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 14)),
@@ -171,7 +172,7 @@ class EHUserAvatar extends StatelessWidget {
               toRoute(Routes.login);
               return;
             }
-            bool? result = await Get.dialog(const EHDialog(title: 'logout ?'));
+            bool? result = await Get.dialog( EHDialog(title: '${'logout'.tr} ?'));
             if (result == true) {
               await ehRequest.requestLogout();
             }

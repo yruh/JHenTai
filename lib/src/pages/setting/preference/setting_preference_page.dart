@@ -55,6 +55,7 @@ class SettingPreferencePage extends StatelessWidget {
               _buildShowDawnInfo(),
               _buildShowEncounterMonster(),
               _buildUseBuiltInBlockedUsers(),
+              _buildConfirmDestructiveActions(),
               _buildBlockRules(),
             ],
           ).withListTileTheme(context),
@@ -314,7 +315,7 @@ class SettingPreferencePage extends StatelessWidget {
           mainAxisSize: MainAxisSize.min,
           children: [
             SliderTheme(
-              data: SliderTheme.of(context).copyWith(showValueIndicator: ShowValueIndicator.always),
+              data: SliderTheme.of(context).copyWith(showValueIndicator: ShowValueIndicator.onDrag),
               child: Slider(
                 min: 20,
                 max: 300,
@@ -490,6 +491,15 @@ class SettingPreferencePage extends StatelessWidget {
           )
         ],
       ),
+    );
+  }
+
+  Widget _buildConfirmDestructiveActions() {
+    return SwitchListTile(
+      title: Text('confirmDestructiveActions'.tr),
+      subtitle: Text('confirmDestructiveActionsHint'.tr),
+      value: preferenceSetting.confirmDestructiveActions.value,
+      onChanged: preferenceSetting.saveConfirmDestructiveActions,
     );
   }
 }

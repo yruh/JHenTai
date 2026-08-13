@@ -63,7 +63,7 @@ class FavoritePageLogic extends BasePageLogic {
 
     state.loadingState = LoadingState.loading;
 
-    state.gallerys.clear();
+    state.galleries.clear();
     state.prevGid = null;
     state.nextGid = null;
     state.seek = DateTime.now();
@@ -446,7 +446,7 @@ class FavoritePageLogic extends BasePageLogic {
         rethrow;
       }
 
-      for (final Gallery gallery in page.gallerys) {
+      for (final Gallery gallery in page.galleries) {
         if (seenGids.add(gallery.gid)) {
           all.add(gallery);
         }

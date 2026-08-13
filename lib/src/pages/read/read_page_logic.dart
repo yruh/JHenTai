@@ -34,6 +34,7 @@ import '../../model/read_page_info.dart';
 import '../../network/eh_request.dart';
 import '../../routes/routes.dart';
 import '../../service/log.dart';
+import '../../service/gallery_download/gallery_images_retainer.dart';
 import '../../service/read_progress_service.dart';
 import '../../setting/preference_setting.dart';
 import '../../setting/read_setting.dart';
@@ -41,12 +42,13 @@ import '../../utils/eh_spider_parser.dart';
 import '../../utils/route_util.dart';
 import '../../utils/toast_util.dart';
 import '../../widget/auto_mode_interval_dialog.dart';
+import '../../widget/eh_image.dart';
 import '../../widget/loading_state_indicator.dart';
 import '../home_page.dart';
 import '../setting/read/setting_read_page.dart';
 import '../setting/keyboard_shortcuts/setting_keyboard_shortcuts_page.dart';
 
-class ReadPageLogic extends GetxController with WidgetsBindingObserver {
+class ReadPageLogic extends GetxController with WidgetsBindingObserver, GalleryImagesRetainer {
   final String pageId = 'pageId';
   final String layoutId = 'layoutId';
   final String onlineImageId = 'onlineImageId';
@@ -111,6 +113,16 @@ class ReadPageLogic extends GetxController with WidgetsBindingObserver {
   @override
   void onReady() {
     super.onReady();
+
+    /// Retain the gallery's image list for the lifetime of the read page.
+    /// The caller (goToReadPage) already ensured [ensureImagesLoaded] so the
+    /// list is resident when [ReadPageState] was constructed; this retain
+    /// keeps it resident even if the download completes mid-read (eviction
+    /// is deferred to our onClose). Online / archive / local modes have no
+    /// service-side list to retain — skip.
+    if (state.readPageInfo.mode == ReadMode.downloaded && state.readPageInfo.gid != null) {
+      retainGalleryImages(state.readPageInfo.gid!);
+    }
 
     WidgetsBinding.instance.addObserver(this);
 
@@ -241,6 +253,7 @@ class ReadPageLogic extends GetxController with WidgetsBindingObserver {
 
     state.focusNode.dispose();
     refreshCurrentTimeAndBatteryLevelTimer.cancel();
+    toggleTurnPageByVolumeKeyLister.dispose();
     toggleCurrentImmersiveModeLister.dispose();
     readDirectionLister.dispose();
     imageSpaceLister.dispose();
@@ -270,6 +283,10 @@ class ReadPageLogic extends GetxController with WidgetsBindingObserver {
       resetBrightness();
     }
 
+    /// Gallery image retain released by [GalleryImagesRetainer.onClose]
+    /// (super.onClose below). If the gallery is fully downloaded and no
+    /// other consumer holds a retain, the list is evicted there.
+
     Get.delete<VerticalListLayoutLogic>(force: true);
     Get.delete<HorizontalListLayoutLogic>(force: true);
     Get.delete<HorizontalPageLayoutLogic>(force: true);
@@ -278,6 +295,10 @@ class ReadPageLogic extends GetxController with WidgetsBindingObserver {
     executor.close();
 
     WakelockPlus.disable();
+
+    /// Unpause + forget every animation gate this page created so a codec
+    /// parked on a gate is not frozen forever after the page is torn down.
+    EHImageAnimationGateRegistry.clear();
   }
 
   void beginToParseImageHref(int index) {
@@ -324,7 +345,7 @@ class ReadPageLogic extends GetxController with WidgetsBindingObserver {
     state.parseImageHrefsStates[index] = LoadingState.idle;
 
     /// some gallery's [thumbnailsCountPerPage] is not equal to default setting, we need to compute and update it.
-    /// For example, default setting is 40, but some gallerys' thumbnails has only high quality thumbnails, which results in 20.
+    /// For example, default setting is 40, but some galleries' thumbnails has only high quality thumbnails, which results in 20.
     bool thumbnailsCountPerPageChanged = state.thumbnailsCountPerPage != detailPageInfo.thumbnailsCountPerPage;
     state.thumbnailsCountPerPage = detailPageInfo.thumbnailsCountPerPage;
 
@@ -407,6 +428,11 @@ class ReadPageLogic extends GetxController with WidgetsBindingObserver {
   }
 
   void listen2VolumeKeys() {
+    if (readSetting.enablePageTurnByVolumeKeys.isFalse) {
+      volumeService.cancelListen();
+      return;
+    }
+
     volumeService.listen((VolumeEventType type) {
       if (type == VolumeEventType.volumeUp) {
         layoutLogic.toPrev();
@@ -414,12 +440,10 @@ class ReadPageLogic extends GetxController with WidgetsBindingObserver {
         layoutLogic.toNext();
       }
     });
-    volumeService.setInterceptVolumeEvent(readSetting.enablePageTurnByVolumeKeys.value);
   }
 
   void restoreVolumeListener() {
     volumeService.cancelListen();
-    volumeService.setInterceptVolumeEvent(false);
   }
 
   /// If [immersiveMode], switch to [SystemUiMode.immersiveSticky], otherwise reset to [SystemUiMode.edgeToEdge]
@@ -522,7 +546,7 @@ class ReadPageLogic extends GetxController with WidgetsBindingObserver {
   }
 
   void _syncDisplayFirstPageAloneToState() {
-    final effective = effectiveDisplayFirstPageAlone;
+    final bool effective = effectiveDisplayFirstPageAlone;
     if (state.displayFirstPageAlone != effective) {
       state.displayFirstPageAlone = effective;
       layoutLogic.toggleDisplayFirstPageAlone();
@@ -537,7 +561,7 @@ class ReadPageLogic extends GetxController with WidgetsBindingObserver {
     if (readSetting.deviceDirection.value == DeviceDirection.landscape) {
       return false;
     }
-    final size = WidgetsBinding.instance.platformDispatcher.views.first.physicalSize;
+    final Size size = WidgetsBinding.instance.platformDispatcher.views.first.physicalSize;
     return size.height >= size.width;
   }
 
@@ -567,18 +591,14 @@ class ReadPageLogic extends GetxController with WidgetsBindingObserver {
     if (!GetPlatform.isMobile || readSetting.enableOrientationSpecificReadDirection.isFalse) {
       return readSetting.imageRegionWidthRatio.value;
     }
-    return isPortrait
-        ? readSetting.portraitImageRegionWidthRatio.value
-        : readSetting.landscapeImageRegionWidthRatio.value;
+    return isPortrait ? readSetting.portraitImageRegionWidthRatio.value : readSetting.landscapeImageRegionWidthRatio.value;
   }
 
   bool get effectiveDisplayFirstPageAlone {
     if (!GetPlatform.isMobile || readSetting.enableOrientationSpecificReadDirection.isFalse) {
       return readSetting.displayFirstPageAlone.value;
     }
-    return isPortrait
-        ? readSetting.portraitDisplayFirstPageAlone.value
-        : readSetting.landscapeDisplayFirstPageAlone.value;
+    return isPortrait ? readSetting.portraitDisplayFirstPageAlone.value : readSetting.landscapeDisplayFirstPageAlone.value;
   }
 
   bool get isInListReadDirection => ReadSetting.isListDirection(effectiveReadDirection);

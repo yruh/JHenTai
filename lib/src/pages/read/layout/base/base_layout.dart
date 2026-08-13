@@ -9,7 +9,7 @@ import 'package:jhentai/src/setting/read_setting.dart';
 import 'package:scrollable_positioned_list/scrollable_positioned_list.dart';
 
 import '../../../../config/ui_config.dart';
-import '../../../../service/gallery_download_service.dart';
+import '../../../../service/gallery_download/gallery_download_service.dart';
 import '../../../../service/super_resolution_service.dart';
 import '../../../../service/log.dart';
 import '../../../../widget/eh_image.dart';
@@ -166,6 +166,7 @@ abstract class BaseLayout extends StatelessWidget {
         loadingProgressWidgetBuilder: (double progress) => _loadingProgressWidgetBuilder(index, progress),
         failedWidgetBuilder: (ExtendedImageState state) => _failedWidgetBuilder(index, state),
         completedWidgetBuilder: (state) => completedWidgetBuilderCallBack(index, state),
+        animateOnlyWhenVisible: true,
         maxBytes: readSetting.enableMaxImageKilobyte.isTrue ? readSetting.maxImageKilobyte.toInt() * 1024 : null,
       ),
     );
@@ -270,6 +271,7 @@ abstract class BaseLayout extends StatelessWidget {
             loadingWidgetBuilder: () => _loadingWidgetBuilder(context, index),
             failedWidgetBuilder: (state) => _failedWidgetBuilderForLocalMode(index, state),
             completedWidgetBuilder: (state) => completedWidgetBuilderForLocalModeCallBack(index, state),
+            animateOnlyWhenVisible: true,
             maxBytes: readSetting.enableMaxImageKilobyte.isTrue ? readSetting.maxImageKilobyte.toInt() * 1024 : null,
           ),
         );
@@ -330,6 +332,7 @@ abstract class BaseLayout extends StatelessWidget {
         loadingWidgetBuilder: () => _loadingWidgetBuilder(context, index),
         failedWidgetBuilder: (state) => _failedWidgetBuilderForLocalMode(index, state),
         completedWidgetBuilder: (state) => completedWidgetBuilderForLocalModeCallBack(index, state),
+        animateOnlyWhenVisible: true,
         maxBytes: readSetting.enableMaxImageKilobyte.isTrue ? readSetting.maxImageKilobyte.toInt() * 1024 : null,
       ),
     );
