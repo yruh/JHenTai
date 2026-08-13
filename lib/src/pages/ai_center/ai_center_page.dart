@@ -32,7 +32,7 @@ class AiCenterPage extends StatelessWidget {
       appBar: AppBar(
         leading: showMenuButton
             ? IconButton(
-                icon: const Icon(FontAwesomeIcons.bars, size: 20),
+                icon: Icon(FontAwesomeIcons.bars.data, size: 20),
                 onPressed: () => TapMenuButtonNotification().dispatch(context),
               )
             : null,

@@ -73,7 +73,7 @@ class FavoritePage extends BasePage {
                 value: 'batchFetchFavoriteTorrents',
                 child: Row(
                   children: [
-                    const Icon(FontAwesomeIcons.magnet, size: 16),
+                    Icon(FontAwesomeIcons.magnet.data, size: 16),
                     const SizedBox(width: 12),
                     Flexible(child: Text('batchFetchFavoriteTorrents'.tr)),
                   ],
