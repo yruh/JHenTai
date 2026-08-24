@@ -486,11 +486,15 @@ class AiXpService {
   }
 
   /// Delete server favorites by gid using cached tokens; concurrency 3.
+  ///
+  /// Duplicate gids are collapsed so a repeated id is not deleted twice and
+  /// does not inflate the reported totals.
   Future<AiXpApplyResult> removeFavoriteGids(
     List<int> gids, {
     AiXpProgressCallback? onProgress,
   }) async {
-    if (gids.isEmpty) {
+    final Set<int> uniqueGids = gids.toSet();
+    if (uniqueGids.isEmpty) {
       return const AiXpApplyResult(successCount: 0, failureCount: 0);
     }
 
@@ -498,7 +502,7 @@ class AiXpService {
 
     final List<Gallery> targets = <Gallery>[];
     int missing = 0;
-    for (final int gid in gids) {
+    for (final int gid in uniqueGids) {
       final Gallery? gallery = _galleryByGid[gid];
       if (gallery == null) {
         missing++;
@@ -510,7 +514,7 @@ class AiXpService {
 
     int success = 0;
     int failure = missing;
-    final int total = gids.length;
+    final int total = uniqueGids.length;
     final Set<int> removedGids = <int>{};
     _report(onProgress, phaseRemovingDuplicates, current: 0, total: total);
 
