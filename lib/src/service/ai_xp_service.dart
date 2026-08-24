@@ -149,6 +149,13 @@ class AiXpService {
   static const int _maxProfileRepresentativeFavorites = 60;
   static const int _maxXpInjectTags = 5;
 
+  /// Safety cap on favorite list pages walked in one scan.
+  ///
+  /// EH serves ~50 favorites per page, so this covers a ~10k-item library.
+  /// Each page also drives gdata enrichment, so an uncapped walk on a corrupt
+  /// or endlessly-paginating response would issue thousands of requests.
+  static const int _maxFavoritePages = 200;
+
   /// Stable progress phase strings (match locale keys).
   static const String phaseLoadingFavorites = 'aiLoadingFavorites';
   static const String phaseLoadingMetadata = 'aiLoadingMetadata';
@@ -497,6 +504,7 @@ class AiXpService {
     int success = 0;
     int failure = missing;
     final int total = gids.length;
+    final Set<int> removedGids = <int>{};
     _report(onProgress, phaseRemovingDuplicates, current: 0, total: total);
 
     await runWithConcurrency<Gallery>(
@@ -511,7 +519,7 @@ class AiXpService {
         try {
           await ehRequest.requestRemoveFavorite(gallery.gid, gallery.token);
           success++;
-          _removeFromCache(gallery.gid);
+          removedGids.add(gallery.gid);
         } on DioException catch (e) {
           failure++;
           log.error(
@@ -525,6 +533,8 @@ class AiXpService {
         }
       },
     );
+
+    _removeFromCache(removedGids);
 
     try {
       await favoriteSetting.fetchDataFromEH();
@@ -555,18 +565,20 @@ class AiXpService {
 
     final List<String> categoryNames =
         List<String>.from(favoriteSetting.favoriteTagNames);
-    final AiXpOrganizationPlan plan = _favoriteSignals.isEmpty
-        ? const AiXpOrganizationPlan()
-        : await _remoteOrganizeFavorites(
+    // No favorites means no remote call was made, so do not claim one.
+    final bool calledRemoteAi = _favoriteSignals.isNotEmpty;
+    final AiXpOrganizationPlan plan = calledRemoteAi
+        ? await _remoteOrganizeFavorites(
             requirements: requirements,
             categoryNames: categoryNames,
-          );
+          )
+        : const AiXpOrganizationPlan();
 
     _report(onProgress, phaseAnalyzingOrganization, current: 1, total: 1);
     return AiXpOrganizationPlanResult(
       plan: plan,
       galleriesByGid: Map<int, Gallery>.from(_galleryByGid),
-      usedRemoteAi: true,
+      usedRemoteAi: calledRemoteAi,
       remoteFallback: false,
     );
   }
@@ -603,6 +615,8 @@ class AiXpService {
 
     int success = 0;
     final int total = moves.length;
+    final Map<int, ({int index, String name})> applied =
+        <int, ({int index, String name})>{};
     _report(onProgress, phaseApplyingOrganization, current: 0, total: total);
 
     await runWithConcurrency<AiXpOrganizationMove>(
@@ -630,11 +644,8 @@ class AiXpService {
             galleryNote.note,
           );
           success++;
-          _updateFavoriteCategoryInCache(
-            gid: move.gid,
-            targetIndex: move.targetIndex,
-            targetName: move.targetName,
-          );
+          applied[move.gid] =
+              (index: move.targetIndex, name: move.targetName);
         } on DioException catch (e) {
           failure++;
           log.error('ai xp organize move fail gid=${move.gid}', e.errorMsg);
@@ -647,6 +658,8 @@ class AiXpService {
         }
       },
     );
+
+    _applyFavoriteCategoryUpdates(applied);
 
     try {
       await favoriteSetting.fetchDataFromEH();
@@ -910,6 +923,7 @@ class AiXpService {
     final Set<int> seenGids = <int>{};
     final Set<String> seenCursors = <String>{};
     String? nextGid;
+    int pages = 0;
 
     while (true) {
       if (nextGid != null && !seenCursors.add(nextGid)) {
@@ -917,6 +931,14 @@ class AiXpService {
             'ai xp favorite enumerate stopped: repeated cursor $nextGid');
         break;
       }
+      if (pages >= _maxFavoritePages) {
+        log.warning(
+          'ai xp favorite enumerate stopped at the $_maxFavoritePages page cap '
+          '(${all.length} galleries); profile will use a partial library',
+        );
+        break;
+      }
+      pages++;
 
       final GalleryPageInfo page;
       try {
@@ -1001,6 +1023,10 @@ class AiXpService {
     final List<List<Gallery>> chunks = chunkList(source, _gdataChunkSize);
     for (final List<Gallery> chunk in chunks) {
       Map<int, GalleryMetadata> byGid = <int, GalleryMetadata>{};
+      // Tracked explicitly rather than inferred from an empty [byGid]: a request
+      // that succeeds but returns no rows is still one failure per item, and
+      // must not be silently counted as zero failures.
+      bool chunkRequestFailed = false;
       try {
         final List<GalleryMetadata> metadatas =
             await ehRequest.requestGalleryMetadatas<List<GalleryMetadata>>(
@@ -1011,23 +1037,27 @@ class AiXpService {
           byGid.putIfAbsent(meta.galleryUrl.gid, () => meta);
         }
       } on DioException catch (e) {
+        chunkRequestFailed = true;
         failures += chunk.length;
         log.error('ai xp gdata chunk failed', e.errorMsg);
         byGid = <int, GalleryMetadata>{};
       } on EHSiteException catch (e) {
+        chunkRequestFailed = true;
         failures += chunk.length;
         log.error('ai xp gdata chunk failed', e.message);
         byGid = <int, GalleryMetadata>{};
       } catch (e, s) {
+        chunkRequestFailed = true;
         failures += chunk.length;
         log.error('ai xp gdata chunk failed', e, s);
         byGid = <int, GalleryMetadata>{};
       }
 
-      final bool chunkFullyFailed = byGid.isEmpty;
       for (final Gallery original in chunk) {
         final GalleryMetadata? meta = byGid[original.gid];
-        if (meta == null && !chunkFullyFailed) {
+        // Whole-chunk errors are already counted above; count per-item misses
+        // only for chunks whose request actually returned.
+        if (meta == null && !chunkRequestFailed) {
           failures++;
         }
 
@@ -1060,7 +1090,8 @@ class AiXpService {
     }
 
     return original.copyWith(
-      // Keep original galleryUrl (gid/token) always.
+      // Keep original galleryUrl (gid/token) and favorite category always:
+      // gdata does not report which favorite slot a gallery sits in.
       title: meta.title.isNotEmpty ? meta.title : original.title,
       category: meta.category.isNotEmpty ? meta.category : original.category,
       pageCount: meta.pageCount,
@@ -1074,12 +1105,6 @@ class AiXpService {
               : original.publishTime),
       isExpunged: meta.isExpunged,
       tags: meta.tags.isNotEmpty ? meta.tags : original.tags,
-      favoriteTagIndex: preserveFavoriteFields
-          ? original.favoriteTagIndex
-          : original.favoriteTagIndex,
-      favoriteTagName: preserveFavoriteFields
-          ? original.favoriteTagName
-          : original.favoriteTagName,
     );
   }
 
@@ -1621,54 +1646,59 @@ class AiXpService {
     _favoriteCacheCapturedAtMs = capturedAtMs;
   }
 
-  void _removeFromCache(int gid) {
-    _favoriteGalleries.removeWhere((Gallery g) => g.gid == gid);
-    _favoriteSignals.removeWhere((AiGallerySignal s) => s.gid == gid);
-    _galleryByGid.remove(gid);
-    _signalByGid.remove(gid);
+  /// Remove [gids] from the shared cache in a single pass.
+  ///
+  /// Batched rather than per-gid: `removeWhere`/`indexWhere` scan the whole
+  /// list, so removing k of n favorites one at a time is O(k*n).
+  void _removeFromCache(Set<int> gids) {
+    if (gids.isEmpty) {
+      return;
+    }
+    _favoriteGalleries.removeWhere((Gallery g) => gids.contains(g.gid));
+    _favoriteSignals.removeWhere((AiGallerySignal s) => gids.contains(s.gid));
+    for (final int gid in gids) {
+      _galleryByGid.remove(gid);
+      _signalByGid.remove(gid);
+    }
   }
 
-  void _updateFavoriteCategoryInCache({
-    required int gid,
-    required int targetIndex,
-    required String targetName,
-  }) {
-    final Gallery? gallery = _galleryByGid[gid];
-    if (gallery != null) {
-      final Gallery updated = gallery.copyWith(
-        favoriteTagIndex: targetIndex,
-        favoriteTagName: targetName,
-      );
-      _galleryByGid[gid] = updated;
-      final int index =
-          _favoriteGalleries.indexWhere((Gallery g) => g.gid == gid);
-      if (index >= 0) {
-        _favoriteGalleries[index] = updated;
+  /// Apply favorite-category reassignments to the shared cache in a single pass.
+  void _applyFavoriteCategoryUpdates(
+    Map<int, ({int index, String name})> updates,
+  ) {
+    if (updates.isEmpty) {
+      return;
+    }
+
+    for (final MapEntry<int, ({int index, String name})> entry
+        in updates.entries) {
+      final Gallery? gallery = _galleryByGid[entry.key];
+      if (gallery != null) {
+        _galleryByGid[entry.key] = gallery.copyWith(
+          favoriteTagIndex: entry.value.index,
+          favoriteTagName: entry.value.name,
+        );
+      }
+      final AiGallerySignal? signal = _signalByGid[entry.key];
+      if (signal != null) {
+        _signalByGid[entry.key] = signal.copyWithFavoriteCategory(
+          index: entry.value.index,
+          name: entry.value.name,
+        );
       }
     }
 
-    final AiGallerySignal? signal = _signalByGid[gid];
-    if (signal != null) {
-      final AiGallerySignal updated = AiGallerySignal(
-        gid: signal.gid,
-        title: signal.title,
-        category: signal.category,
-        tags: signal.tags,
-        uploader: signal.uploader,
-        rating: signal.rating,
-        pageCount: signal.pageCount,
-        language: signal.language,
-        torrentCount: signal.torrentCount,
-        favoriteCategoryIndex: targetIndex,
-        favoriteCategoryName: targetName,
-        favoritedAtMs: signal.favoritedAtMs,
-        publishedAtMs: signal.publishedAtMs,
-      );
-      _signalByGid[gid] = updated;
-      final int index =
-          _favoriteSignals.indexWhere((AiGallerySignal s) => s.gid == gid);
-      if (index >= 0) {
-        _favoriteSignals[index] = updated;
+    // Mirror the map updates into the ordered lists with one scan each.
+    for (int i = 0; i < _favoriteGalleries.length; i++) {
+      final Gallery? updated = _galleryByGid[_favoriteGalleries[i].gid];
+      if (updated != null) {
+        _favoriteGalleries[i] = updated;
+      }
+    }
+    for (int i = 0; i < _favoriteSignals.length; i++) {
+      final AiGallerySignal? updated = _signalByGid[_favoriteSignals[i].gid];
+      if (updated != null) {
+        _favoriteSignals[i] = updated;
       }
     }
   }
@@ -1994,6 +2024,11 @@ class AiXpService {
     }
   }
 
+  /// Alias (lower-case) -> canonical EH category name.
+  ///
+  /// Every canonical value is also present as its own lower-cased key, so a
+  /// single map lookup on the lower-cased input resolves both aliases and
+  /// already-canonical names.
   static const Map<String, String> _categoryCanonical = <String, String>{
     'doujinshi': 'Doujinshi',
     'manga': 'Manga',
@@ -2018,29 +2053,11 @@ class AiXpService {
   };
 
   static bool _isKnownCategory(String raw) {
-    final String lower = raw.trim().toLowerCase();
-    if (_categoryCanonical.containsKey(lower)) {
-      return true;
-    }
-    for (final String name in _categoryCanonical.values) {
-      if (name.toLowerCase() == lower) {
-        return true;
-      }
-    }
-    return false;
+    return _categoryCanonical.containsKey(raw.trim().toLowerCase());
   }
 
   static String _canonicalCategory(String raw) {
-    final String lower = raw.trim().toLowerCase();
-    final String? mapped = _categoryCanonical[lower];
-    if (mapped != null) {
-      return mapped;
-    }
-    for (final String name in _categoryCanonical.values) {
-      if (name.toLowerCase() == lower) {
-        return name;
-      }
-    }
-    return raw.trim();
+    final String trimmed = raw.trim();
+    return _categoryCanonical[trimmed.toLowerCase()] ?? trimmed;
   }
 }

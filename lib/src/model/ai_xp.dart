@@ -48,6 +48,31 @@ class AiGallerySignal {
   /// Effective timestamp for recency decay.
   int? get recencyMs => favoritedAtMs ?? publishedAtMs;
 
+  /// Copy with selected overrides.
+  ///
+  /// Only covers the fields callers actually reassign (favorite category);
+  /// everything else is carried over verbatim.
+  AiGallerySignal copyWithFavoriteCategory({
+    required int? index,
+    required String? name,
+  }) {
+    return AiGallerySignal(
+      gid: gid,
+      title: title,
+      category: category,
+      tags: tags,
+      uploader: uploader,
+      rating: rating,
+      pageCount: pageCount,
+      language: language,
+      torrentCount: torrentCount,
+      favoriteCategoryIndex: index,
+      favoriteCategoryName: name,
+      favoritedAtMs: favoritedAtMs,
+      publishedAtMs: publishedAtMs,
+    );
+  }
+
   Map<String, dynamic> toJson() {
     return <String, dynamic>{
       'gid': gid,

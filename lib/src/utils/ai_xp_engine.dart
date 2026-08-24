@@ -1,6 +1,7 @@
 import 'dart:math' as math;
 
 import 'package:jhentai/src/model/ai_xp.dart';
+import 'package:jhentai/src/utils/favorite_dedupe_util.dart';
 
 /// Deterministic local AI XP engine.
 ///
@@ -49,7 +50,7 @@ class AiXpEngine {
     final List<int> sourceGids = signals.map((AiGallerySignal s) => s.gid).toList()
       ..sort();
 
-    // term -> list of (gid, timestampMs, weightMult)
+    // term -> list of (gid, timestampMs)
     final Map<String, List<_Occurrence>> tagOcc = <String, List<_Occurrence>>{};
     final Map<String, List<_Occurrence>> titleOcc = <String, List<_Occurrence>>{};
     final List<Set<String>> perDocTags = <Set<String>>[];
@@ -64,14 +65,14 @@ class AiXpEngine {
           continue;
         }
         docTags.add(tag);
-        (tagOcc[tag] ??= <_Occurrence>[]).add(_Occurrence(signal.gid, ts, 1.0));
+        (tagOcc[tag] ??= <_Occurrence>[]).add(_Occurrence(signal.gid, ts));
       }
 
       for (final String token in tokenizeTitle(signal.title)) {
         if (_stopWords.contains(token)) {
           continue;
         }
-        (titleOcc[token] ??= <_Occurrence>[]).add(_Occurrence(signal.gid, ts, 1.0));
+        (titleOcc[token] ??= <_Occurrence>[]).add(_Occurrence(signal.gid, ts));
       }
 
       perDocTags.add(docTags);
@@ -82,7 +83,7 @@ class AiXpEngine {
     final Map<String, int> tagDf = <String, int>{};
 
     for (final MapEntry<String, List<_Occurrence>> entry in tagOcc.entries) {
-      final int df = entry.value.map((_Occurrence o) => o.gid).toSet().length;
+      final int df = _documentFrequency(entry.value);
       tagDf[entry.key] = df;
       if (_isSaturated(df: df, totalDocuments: totalDocs)) {
         saturatedTags.add(entry.key);
@@ -98,6 +99,7 @@ class AiXpEngine {
       }
       final double weight = _calculateWeight(
         occurrences: entry.value,
+        df: tagDf[entry.key]!,
         totalDocuments: totalDocs,
         nowMs: effectiveNow,
       );
@@ -108,12 +110,13 @@ class AiXpEngine {
 
     final Map<String, double> titleWeights = <String, double>{};
     for (final MapEntry<String, List<_Occurrence>> entry in titleOcc.entries) {
-      final int df = entry.value.map((_Occurrence o) => o.gid).toSet().length;
+      final int df = _documentFrequency(entry.value);
       if (_isSaturated(df: df, totalDocuments: totalDocs)) {
         continue;
       }
       final double weight = _calculateWeight(
         occurrences: entry.value,
+        df: df,
         totalDocuments: totalDocs,
         nowMs: effectiveNow,
       );
@@ -123,25 +126,50 @@ class AiXpEngine {
     }
 
     // Tag-pair PMI over non-saturated tags present in the profile.
-    final Map<String, int> pairCounts = <String, int>{};
+    //
+    // Counted on interned integer ids rather than concatenated string keys: a
+    // gallery with T profile tags contributes T*(T-1)/2 pairs, so string keys
+    // allocate millions of short-lived strings on a large favorites library.
+    // Ids are dense, so `left * idCount + right` is a collision-free int key;
+    // strings are re-materialized only when building the pair list below.
+    //
+    // [tagWeights] already excludes saturated tags, so membership in
+    // [pairTagIds] subsumes the previous saturated/weight double check.
+    // Ids follow sorted tag order, so sorting ids per document yields the same
+    // (left, right) orientation the previous string sort did.
+    final List<String> pairTags = tagWeights.keys.toList()..sort();
+    final int idCount = pairTags.length;
+    final Map<String, int> pairTagIds = <String, int>{
+      for (int i = 0; i < idCount; i++) pairTags[i]: i,
+    };
+
+    final Map<int, int> pairCounts = <int, int>{};
+    final List<int> docIds = <int>[];
     for (final Set<String> docTags in perDocTags) {
-      final List<String> valid = docTags
-          .where((String t) => !saturatedSet.contains(t) && tagWeights.containsKey(t))
-          .toList()
-        ..sort();
-      for (int i = 0; i < valid.length; i++) {
-        for (int j = i + 1; j < valid.length; j++) {
-          final String key = '${valid[i]}\u0000${valid[j]}';
+      docIds.clear();
+      for (final String tag in docTags) {
+        final int? id = pairTagIds[tag];
+        if (id != null) {
+          docIds.add(id);
+        }
+      }
+      if (docIds.length < 2) {
+        continue;
+      }
+      docIds.sort();
+      for (int i = 0; i < docIds.length; i++) {
+        final int base = docIds[i] * idCount;
+        for (int j = i + 1; j < docIds.length; j++) {
+          final int key = base + docIds[j];
           pairCounts[key] = (pairCounts[key] ?? 0) + 1;
         }
       }
     }
 
     final List<AiXpTagPair> pairs = <AiXpTagPair>[];
-    pairCounts.forEach((String key, int count) {
-      final int sep = key.indexOf('\u0000');
-      final String left = key.substring(0, sep);
-      final String right = key.substring(sep + 1);
+    pairCounts.forEach((int key, int count) {
+      final String left = pairTags[key ~/ idCount];
+      final String right = pairTags[key % idCount];
       final double pT1 = (tagDf[left] ?? 1) / totalDocs;
       final double pT2 = (tagDf[right] ?? 1) / totalDocs;
       final double pJoint = count / totalDocs;
@@ -201,22 +229,32 @@ class AiXpEngine {
     return df / totalDocuments > saturationThreshold;
   }
 
+  /// Number of distinct source documents [occurrences] came from.
+  static int _documentFrequency(List<_Occurrence> occurrences) {
+    final Set<int> gids = <int>{};
+    for (final _Occurrence occurrence in occurrences) {
+      gids.add(occurrence.gid);
+    }
+    return gids.length;
+  }
+
+  /// Recency-decayed TF-IDF weight for one term.
+  ///
+  /// [df] is supplied by the caller, which has already computed it to decide
+  /// saturation — recomputing it here would rebuild the same gid set twice for
+  /// every term in the library. Callers filter saturated terms out beforehand.
   double _calculateWeight({
     required List<_Occurrence> occurrences,
+    required int df,
     required int totalDocuments,
     required int nowMs,
   }) {
-    final int df = occurrences.map((_Occurrence o) => o.gid).toSet().length;
-    if (_isSaturated(df: df, totalDocuments: totalDocuments)) {
-      return 0;
-    }
-
     double weightedTf = 0;
     for (final _Occurrence occ in occurrences) {
       final int daysAgo = math.max(0, ((nowMs - occ.timestampMs) / 86400000).floor());
       // Non-positive decay window disables recency decay (avoids /0, NaN, Inf).
       final double decay = timeDecayDays <= 0 ? 1.0 : math.exp(-daysAgo / timeDecayDays);
-      weightedTf += decay * occ.weightMult;
+      weightedTf += decay;
     }
     if (weightedTf > 0) {
       weightedTf = math.log(1 + weightedTf) / math.ln10;
@@ -448,22 +486,16 @@ class AiXpEngine {
   }
 
   /// Build a stable dedupe key, or null when title/category is empty.
+  ///
+  /// Delegates to [buildFavoriteDedupeKey] so the AI duplicate scanner and the
+  /// favorites-page dedupe button agree on what counts as the same gallery.
   static String? buildDedupeKey({required String category, required String title}) {
-    final String normalizedCategory = normalizeCategory(category);
-    final String normalizedTitle = normalizeTitle(title);
-    if (normalizedCategory.isEmpty || normalizedTitle.isEmpty) {
-      return null;
-    }
-    return '$normalizedCategory\u0000$normalizedTitle';
+    return buildFavoriteDedupeKey(category: category, title: title);
   }
 
-  static String normalizeTitle(String title) {
-    return title.trim().replaceAll(RegExp(r'\s+'), ' ').toLowerCase();
-  }
+  static String normalizeTitle(String title) => normalizeFavoriteTitle(title);
 
-  static String normalizeCategory(String category) {
-    return category.trim().toLowerCase();
-  }
+  static String normalizeCategory(String category) => normalizeFavoriteCategory(category);
 
   // ---------------------------------------------------------------------------
   // Organization
@@ -774,27 +806,9 @@ class AiXpEngine {
       }
     }
 
-    // Page bounds.
-    final List<RegExp> minPagePatterns = <RegExp>[
-      RegExp(
-        r'(?:min(?:imum)?\s*pages?|pages?)\s*[>=:：]?\s*(\d+)',
-        caseSensitive: false,
-      ),
-      RegExp(r'at\s+least\s+(\d+)\s*pages?', caseSensitive: false),
-      RegExp(r'页数\s*(?:至少|>=?|不少于)\s*(\d+)'),
-      RegExp(r'頁數\s*(?:至少|>=?|不少於)\s*(\d+)'),
-      RegExp(r'至少\s*(\d+)\s*页'),
-      RegExp(r'至少\s*(\d+)\s*頁'),
-    ];
-    for (final RegExp re in minPagePatterns) {
-      final Match? m = re.firstMatch(remaining);
-      if (m != null) {
-        pageAtLeast = int.tryParse(m.group(1)!);
-        remaining = remaining.replaceFirst(re, ' ');
-        break;
-      }
-    }
-
+    // Page bounds. Max is parsed before min: the min list has a bare
+    // `pages?` alternative with an optional operator, so it would otherwise
+    // claim the number in "max pages: 30" and record it as a minimum.
     final List<RegExp> maxPagePatterns = <RegExp>[
       RegExp(
         r'(?:max(?:imum)?\s*pages?|pages?)\s*[<=:：]\s*(\d+)',
@@ -810,6 +824,26 @@ class AiXpEngine {
       final Match? m = re.firstMatch(remaining);
       if (m != null) {
         pageAtMost = int.tryParse(m.group(1)!);
+        remaining = remaining.replaceFirst(re, ' ');
+        break;
+      }
+    }
+
+    final List<RegExp> minPagePatterns = <RegExp>[
+      RegExp(
+        r'(?:min(?:imum)?\s*pages?|pages?)\s*[>=:：]?\s*(\d+)',
+        caseSensitive: false,
+      ),
+      RegExp(r'at\s+least\s+(\d+)\s*pages?', caseSensitive: false),
+      RegExp(r'页数\s*(?:至少|>=?|不少于)\s*(\d+)'),
+      RegExp(r'頁數\s*(?:至少|>=?|不少於)\s*(\d+)'),
+      RegExp(r'至少\s*(\d+)\s*页'),
+      RegExp(r'至少\s*(\d+)\s*頁'),
+    ];
+    for (final RegExp re in minPagePatterns) {
+      final Match? m = re.firstMatch(remaining);
+      if (m != null) {
+        pageAtLeast = int.tryParse(m.group(1)!);
         remaining = remaining.replaceFirst(re, ' ');
         break;
       }
@@ -860,8 +894,9 @@ class AiXpEngine {
     if (tag.isEmpty) {
       return '';
     }
-    // Strip common Pixiv-style popularity suffixes if present.
-    tag = tag.replaceFirst(RegExp(r'\d+users入[りり]?$'), '');
+    // Strip common Pixiv-style popularity suffixes if present ("1000users入り").
+    // り = hiragana り, リ = katakana リ (both spellings occur in the wild).
+    tag = tag.replaceFirst(RegExp(r'\d+users入[りリ]?$'), '');
     tag = tag.replaceAll(RegExp(r'\s+'), '_');
     tag = tag.replaceAll(RegExp(r'_+'), '_');
     tag = tag.replaceAll(RegExp(r'^_|_$'), '');
@@ -965,9 +1000,8 @@ class AiXpEngine {
 class _Occurrence {
   final int gid;
   final int timestampMs;
-  final double weightMult;
 
-  const _Occurrence(this.gid, this.timestampMs, this.weightMult);
+  const _Occurrence(this.gid, this.timestampMs);
 }
 
 class _DedupeBucket {

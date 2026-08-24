@@ -405,7 +405,7 @@ class SearchConfig {
       disableFilterForLanguage: disableFilterForLanguage ?? this.disableFilterForLanguage,
       disableFilterForUploader: disableFilterForUploader ?? this.disableFilterForUploader,
       disableFilterForTags: disableFilterForTags ?? this.disableFilterForTags,
-      searchFavoriteCategoryIndex: this.searchFavoriteCategoryIndex,
+      searchFavoriteCategoryIndex: searchFavoriteCategoryIndex ?? this.searchFavoriteCategoryIndex,
     );
   }
 

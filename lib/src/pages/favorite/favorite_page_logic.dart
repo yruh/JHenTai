@@ -32,6 +32,12 @@ import 'favorite_page_state.dart';
 
 class FavoritePageLogic extends BasePageLogic {
   static const int _metadataBatchSize = 25;
+
+  /// Safety cap on favorite list pages walked in one batch operation.
+  ///
+  /// EH serves ~50 favorites per page, so this covers a ~10k-item library and
+  /// bounds the request count if the server keeps handing back fresh cursors.
+  static const int _maxFavoritePages = 200;
   static const int _torrentFetchConcurrency = 3;
   static const int _deleteConcurrency = 3;
 
@@ -422,6 +428,7 @@ class FavoritePageLogic extends BasePageLogic {
     final Set<int> seenGids = <int>{};
     final Set<String> seenCursors = <String>{};
     String? nextGid;
+    int pages = 0;
 
     progress.clearProgress();
 
@@ -430,6 +437,11 @@ class FavoritePageLogic extends BasePageLogic {
         log.warning('favorite enumerate stopped: repeated cursor $nextGid');
         break;
       }
+      if (pages >= _maxFavoritePages) {
+        log.warning('favorite enumerate stopped at the $_maxFavoritePages page cap (${all.length} galleries)');
+        break;
+      }
+      pages++;
 
       final GalleryPageInfo page;
       try {

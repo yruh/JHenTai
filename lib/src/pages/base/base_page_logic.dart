@@ -93,9 +93,20 @@ abstract class BasePageLogic extends GetxController with Scroll2TopLogicMixin {
     return loadBefore();
   }
 
+  /// Upper bound on consecutive pages fetched in one user action when every page
+  /// is fully removed by client-side filters (block rules / hide-favorited /
+  /// torrent filter).
+  ///
+  /// Without a cap, a strict filter set turns a single pull-to-refresh into an
+  /// unbounded chain of requests (each page may additionally trigger gdata calls
+  /// for torrent filtering), which trips EH rate limiting. On hitting the cap we
+  /// keep [GalleryPageInfo.nextGid] so the user can continue manually.
+  static const int _maxFilteredPageFetches = 5;
+
   /// not clear current data before refresh
   /// [updateId] is for subclass to override
-  /// Continues through following cursors when a page is fully filtered out.
+  /// Continues through following cursors when a page is fully filtered out,
+  /// for at most [_maxFilteredPageFetches] pages.
   Future<void> handleRefresh({String? updateId}) async {
     if (state.refreshState == LoadingState.loading) {
       return;
@@ -111,6 +122,7 @@ abstract class BasePageLogic extends GetxController with Scroll2TopLogicMixin {
     String? nextGid;
     GalleryCount? totalCount;
     FavoriteSortOrder? favoriteSortOrder;
+    int fetchedPages = 0;
 
     while (true) {
       final String cursorKey = cursor ?? '';
@@ -120,6 +132,7 @@ abstract class BasePageLogic extends GetxController with Scroll2TopLogicMixin {
         nextGid = null;
         break;
       }
+      fetchedPages++;
 
       GalleryPageInfo galleryPage;
       try {
@@ -160,6 +173,12 @@ abstract class BasePageLogic extends GetxController with Scroll2TopLogicMixin {
       galleries = await postHandleNewGalleries(galleryPage.galleries, cleanDuplicate: false);
 
       if (galleries.isNotEmpty || galleryPage.nextGid == null) {
+        break;
+      }
+
+      /// Cap consecutive fully-filtered pages; keep nextGid so the user can continue.
+      if (fetchedPages >= _maxFilteredPageFetches) {
+        log.warning('handleRefresh stopped after $fetchedPages fully-filtered pages, keeping nextGid "${galleryPage.nextGid}"');
         break;
       }
 
@@ -270,7 +289,8 @@ abstract class BasePageLogic extends GetxController with Scroll2TopLogicMixin {
   }
 
   /// has scrolled to bottom, so need to load more data.
-  /// Continues through following cursors when a page is fully filtered out.
+  /// Continues through following cursors when a page is fully filtered out,
+  /// for at most [_maxFilteredPageFetches] pages.
   Future<void> loadMore({bool checkLoadingState = true}) async {
     if (checkLoadingState && state.loadingState == LoadingState.loading) {
       return;
@@ -282,6 +302,7 @@ abstract class BasePageLogic extends GetxController with Scroll2TopLogicMixin {
     final Set<String> visitedCursors = {};
     String? cursor = state.nextGid;
     List<Gallery> galleries = [];
+    int fetchedPages = 0;
 
     while (true) {
       final String cursorKey = cursor ?? '';
@@ -291,6 +312,7 @@ abstract class BasePageLogic extends GetxController with Scroll2TopLogicMixin {
         state.nextGid = null;
         break;
       }
+      fetchedPages++;
 
       GalleryPageInfo galleryPage;
       try {
@@ -330,6 +352,13 @@ abstract class BasePageLogic extends GetxController with Scroll2TopLogicMixin {
         break;
       }
 
+      /// Cap consecutive fully-filtered pages; state.nextGid stays set so the
+      /// next scroll-to-bottom resumes from here.
+      if (fetchedPages >= _maxFilteredPageFetches) {
+        log.warning('loadMore stopped after $fetchedPages fully-filtered pages, keeping nextGid "${galleryPage.nextGid}"');
+        break;
+      }
+
       /// Next cursor already seen -> terminate rather than re-fetching forever.
       if (visitedCursors.contains(galleryPage.nextGid)) {
         log.warning('loadMore detected pagination cursor loop at "${galleryPage.nextGid}", stop loading');
@@ -355,7 +384,8 @@ abstract class BasePageLogic extends GetxController with Scroll2TopLogicMixin {
   }
 
   /// Jump to [dateTime], then continue forward through nextGid when the landed
-  /// page is fully removed by client filters (same cursor-loop guard as loadMore).
+  /// page is fully removed by client filters (same cursor-loop guard and
+  /// [_maxFilteredPageFetches] cap as loadMore).
   Future<void> jumpPage(DateTime dateTime) async {
     if (state.loadingState == LoadingState.loading) {
       return;
@@ -379,6 +409,7 @@ abstract class BasePageLogic extends GetxController with Scroll2TopLogicMixin {
     String? nextGid;
     GalleryCount? totalCount;
     FavoriteSortOrder? favoriteSortOrder;
+    int fetchedPages = 0;
 
     while (true) {
       final String cursorKey = cursor ?? '';
@@ -388,6 +419,7 @@ abstract class BasePageLogic extends GetxController with Scroll2TopLogicMixin {
         nextGid = null;
         break;
       }
+      fetchedPages++;
 
       GalleryPageInfo galleryPage;
       try {
@@ -432,6 +464,12 @@ abstract class BasePageLogic extends GetxController with Scroll2TopLogicMixin {
       galleries = await postHandleNewGalleries(galleryPage.galleries, cleanDuplicate: false);
 
       if (galleries.isNotEmpty || galleryPage.nextGid == null) {
+        break;
+      }
+
+      /// Cap consecutive fully-filtered pages; keep nextGid so the user can continue.
+      if (fetchedPages >= _maxFilteredPageFetches) {
+        log.warning('jumpPage stopped after $fetchedPages fully-filtered pages, keeping nextGid "${galleryPage.nextGid}"');
         break;
       }
 
