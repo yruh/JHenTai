@@ -955,7 +955,19 @@ class AiXpEngine {
     'colored',
   };
 
+  /// Canonical EH category name for [raw], or null when unrecognized.
+  ///
+  /// Accepts EH names, spacing/underscore variants, and the Chinese aliases in
+  /// [_categoryAliases]. Single source of truth for category normalization, so
+  /// local intent parsing and remote-AI response validation agree.
+  static String? canonicalCategory(String raw) {
+    return _categoryAliases[raw.trim().toLowerCase()];
+  }
+
   /// Alias -> canonical EH category name.
+  ///
+  /// Every canonical value is also present as its own lower-cased key, so one
+  /// lookup resolves both aliases and already-canonical names.
   static const Map<String, String> _categoryAliases = <String, String>{
     'doujinshi': 'Doujinshi',
     '同人': 'Doujinshi',

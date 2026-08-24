@@ -3,7 +3,6 @@ import 'dart:convert';
 
 import 'package:dio/dio.dart';
 import 'package:intl/intl.dart';
-import 'package:jhentai/src/database/database.dart';
 import 'package:jhentai/src/enum/config_enum.dart';
 import 'package:jhentai/src/exception/eh_site_exception.dart';
 import 'package:jhentai/src/extension/dio_exception_extension.dart';
@@ -15,7 +14,7 @@ import 'package:jhentai/src/model/gallery_note.dart';
 import 'package:jhentai/src/model/gallery_page.dart';
 import 'package:jhentai/src/model/gallery_tag.dart';
 import 'package:jhentai/src/model/search_config.dart';
-import 'package:jhentai/src/network/ai_request.dart';
+import 'package:jhentai/src/network/ai_xp_remote.dart';
 import 'package:jhentai/src/network/eh_request.dart';
 import 'package:jhentai/src/service/local_config_service.dart';
 import 'package:jhentai/src/service/log.dart';
@@ -26,6 +25,7 @@ import 'package:jhentai/src/setting/user_setting.dart';
 import 'package:jhentai/src/utils/ai_xp_engine.dart';
 import 'package:jhentai/src/utils/eh_spider_parser.dart';
 import 'package:jhentai/src/utils/favorite_dedupe_util.dart';
+import 'package:jhentai/src/utils/favorite_enumerate_util.dart';
 
 /// Global AI XP orchestration service.
 AiXpService aiXpService = AiXpService();
@@ -139,14 +139,10 @@ class AiXpEnhancedSearchResult {
 class AiXpService {
   static const int _gdataChunkSize = 25;
   static const int _mutationConcurrency = 3;
-  static const int _orgRemoteChunkSize = 50;
-  static const int _maxRecommendationSearches = 6;
-  static const int _maxRecommendations = 30;
+
+  /// Candidates handed to the remote ranker after local pre-filtering.
   static const int _maxRemoteRankingCandidates = 80;
-  static const int _maxRemotePreferences = 10;
-  static const int _maxRemoteEvidenceTags = 12;
   static const int _maxRemoteStrategyTags = 4;
-  static const int _maxProfileRepresentativeFavorites = 60;
   static const int _maxXpInjectTags = 5;
 
   /// Safety cap on favorite list pages walked in one scan.
@@ -169,6 +165,7 @@ class AiXpService {
   static const String phaseInterpretingSearch = 'aiInterpretingSearch';
 
   final AiXpEngine _engine;
+  final AiXpRemote _remote;
 
   AiXpProfile? _profile;
   final List<Gallery> _favoriteGalleries = <Gallery>[];
@@ -186,7 +183,11 @@ class AiXpService {
   Future<void>? _ensureLiveFavoritesFuture;
   bool _ensureLiveFavoritesInFlightForce = false;
 
-  AiXpService({AiXpEngine engine = const AiXpEngine()}) : _engine = engine;
+  AiXpService({
+    AiXpEngine engine = const AiXpEngine(),
+    AiXpRemote remote = const AiXpRemote(),
+  })  : _engine = engine,
+        _remote = remote;
 
   AiXpProfile? get cachedProfile => _profile;
 
@@ -281,7 +282,10 @@ class AiXpService {
         _engine.buildProfile(_favoriteSignals);
     final AiXpProfile profile = statisticalProfile.isEmpty
         ? statisticalProfile
-        : await _remoteBuildProfile(statisticalProfile);
+        : await _remote.buildProfile(
+            statisticalProfile: statisticalProfile,
+            signals: _favoriteSignals,
+          );
     await saveProfile(profile);
     _report(onProgress, phaseBuildingProfile, current: 1, total: 1);
 
@@ -318,14 +322,17 @@ class AiXpService {
       return const <AiXpRecommendation>[];
     }
     if (!effective.generatedByRemoteAi ||
-        !effective.searchStrategies.any(_isUsableSearchStrategy)) {
+        !effective.searchStrategies.any(AiXpRemote.isUsableSearchStrategy)) {
       final AiXpProfile statisticalProfile =
           _engine.buildProfile(_favoriteSignals);
       if (statisticalProfile.isEmpty) {
         return const <AiXpRecommendation>[];
       }
       _report(onProgress, phaseBuildingProfile, current: 0, total: 1);
-      effective = await _remoteBuildProfile(statisticalProfile);
+      effective = await _remote.buildProfile(
+        statisticalProfile: statisticalProfile,
+        signals: _favoriteSignals,
+      );
       await saveProfile(effective);
       _report(onProgress, phaseBuildingProfile, current: 1, total: 1);
     }
@@ -411,7 +418,7 @@ class AiXpService {
       remoteCandidates.add(signal);
     }
 
-    final List<AiXpRankedCandidate> ranked = await _remoteRankCandidates(
+    final List<AiXpRankedCandidate> ranked = await _remote.rankCandidates(
       profile: effective,
       candidates: remoteCandidates,
     );
@@ -567,16 +574,25 @@ class AiXpService {
         List<String>.from(favoriteSetting.favoriteTagNames);
     // No favorites means no remote call was made, so do not claim one.
     final bool calledRemoteAi = _favoriteSignals.isNotEmpty;
-    final AiXpOrganizationPlan plan = calledRemoteAi
-        ? await _remoteOrganizeFavorites(
+    final List<AiXpOrganizationMove> moves = calledRemoteAi
+        ? await _remote.organizeFavorites(
             requirements: requirements,
             categoryNames: categoryNames,
+            signals: _favoriteSignals,
+            signalByGid: _signalByGid,
           )
-        : const AiXpOrganizationPlan();
+        : const <AiXpOrganizationMove>[];
+
+    // Rules are parsed locally purely so the preview dialog can show what the
+    // user's free-form requirements were understood to mean; the moves
+    // themselves come from the model.
+    final List<AiXpOrganizationRule> rules = calledRemoteAi
+        ? _engine.parseOrganizationRules(requirements, categoryNames)
+        : const <AiXpOrganizationRule>[];
 
     _report(onProgress, phaseAnalyzingOrganization, current: 1, total: 1);
     return AiXpOrganizationPlanResult(
-      plan: plan,
+      plan: AiXpOrganizationPlan(rules: rules, moves: moves),
       galleriesByGid: Map<int, Gallery>.from(_galleryByGid),
       usedRemoteAi: calledRemoteAi,
       remoteFallback: false,
@@ -696,7 +712,7 @@ class AiXpService {
     }
     final AiXpSearchIntent localHint = _engine.parseSearchIntent(trimmedQuery);
     final AiXpSearchIntent intent =
-        await _remoteParseSearchIntent(trimmedQuery, localHint);
+        await _remote.parseSearchIntent(query: trimmedQuery, localHint: localHint);
 
     final AiXpProfile? effectiveProfile =
         profile ?? _profile ?? await loadProfile();
@@ -916,60 +932,13 @@ class AiXpService {
 
   Future<List<Gallery>> _enumerateAllServerFavorites({
     AiXpProgressCallback? onProgress,
-  }) async {
-    final SearchConfig searchConfig =
-        SearchConfig(searchType: SearchType.favorite);
-    final List<Gallery> all = <Gallery>[];
-    final Set<int> seenGids = <int>{};
-    final Set<String> seenCursors = <String>{};
-    String? nextGid;
-    int pages = 0;
-
-    while (true) {
-      if (nextGid != null && !seenCursors.add(nextGid)) {
-        log.warning(
-            'ai xp favorite enumerate stopped: repeated cursor $nextGid');
-        break;
-      }
-      if (pages >= _maxFavoritePages) {
-        log.warning(
-          'ai xp favorite enumerate stopped at the $_maxFavoritePages page cap '
-          '(${all.length} galleries); profile will use a partial library',
-        );
-        break;
-      }
-      pages++;
-
-      final GalleryPageInfo page;
-      try {
-        page = await ehRequest.requestGalleryPage(
-          nextGid: nextGid,
-          searchConfig: searchConfig,
-          parser: EHSpiderParser.galleryPage2GalleryPageInfo,
-        );
-      } on DioException catch (e) {
-        log.error('ai xp enumerate favorites fail', e.errorMsg);
-        rethrow;
-      } on EHSiteException catch (e) {
-        log.error('ai xp enumerate favorites fail', e.message);
-        rethrow;
-      }
-
-      for (final Gallery gallery in page.galleries) {
-        if (seenGids.add(gallery.gid)) {
-          all.add(gallery);
-        }
-      }
-
-      _report(onProgress, phaseLoadingFavorites, current: all.length, total: 0);
-
-      if (page.nextGid == null) {
-        break;
-      }
-      nextGid = page.nextGid;
-    }
-
-    return all;
+  }) {
+    return enumerateAllServerFavorites(
+      maxPages: _maxFavoritePages,
+      onPageLoaded: (int loadedCount) {
+        _report(onProgress, phaseLoadingFavorites, current: loadedCount, total: 0);
+      },
+    );
   }
 
   Future<
@@ -1171,14 +1140,14 @@ class AiXpService {
     final Set<String> usedKeys = <String>{};
 
     for (final AiXpSearchStrategy strategy in profile.searchStrategies) {
-      if (searches.length >= _maxRecommendationSearches) {
+      if (searches.length >= AiXpRemote.maxSearchStrategies) {
         break;
       }
-      final List<TagData> tags = _validatedRemoteTags(
+      final List<TagData> tags = AiXpRemote.validatedTags(
         strategy.tags,
         limit: _maxRemoteStrategyTags,
       ).map(_tagDataFromSignal).whereType<TagData>().toList();
-      final String keyword = _truncate(strategy.keyword.trim(), 120);
+      final String keyword = AiXpRemote.truncate(strategy.keyword.trim(), 120);
       if (tags.isEmpty && keyword.isEmpty) {
         continue;
       }
@@ -1201,399 +1170,6 @@ class AiXpService {
   // ---------------------------------------------------------------------------
   // Internal: remote AI helpers
   // ---------------------------------------------------------------------------
-
-  Future<AiXpProfile> _remoteBuildProfile(
-      AiXpProfile statisticalProfile) async {
-    final List<AiGallerySignal> representatives =
-        List<AiGallerySignal>.from(_favoriteSignals)
-          ..sort((AiGallerySignal a, AiGallerySignal b) {
-            final int byTime = (b.recencyMs ?? -1).compareTo(a.recencyMs ?? -1);
-            return byTime != 0 ? byTime : a.gid.compareTo(b.gid);
-          });
-
-    final Map<String, dynamic> payload = <String, dynamic>{
-      'locale': Intl.getCurrentLocale(),
-      'favoriteCount': _favoriteSignals.length,
-      'categoryCounts': _countSignalValues(
-          _favoriteSignals.map((AiGallerySignal s) => s.category)),
-      'languageCounts': _countSignalValues(
-          _favoriteSignals.map((AiGallerySignal s) => s.language ?? '')),
-      'topTags': _weightedPayload(statisticalProfile.tagWeights, 80, 'tag'),
-      'topTitleTerms':
-          _weightedPayload(statisticalProfile.titleWeights, 40, 'term'),
-      'topTagPairs': statisticalProfile.tagPairs.take(30).map((AiXpTagPair p) {
-        return <String, dynamic>{
-          'left': p.left,
-          'right': p.right,
-          'weight': p.weight,
-          'count': p.count,
-        };
-      }).toList(),
-      'representativeFavorites': representatives
-          .take(_maxProfileRepresentativeFavorites)
-          .map((AiGallerySignal s) {
-        return <String, dynamic>{
-          'title': _truncate(s.title, 240),
-          'category': s.category,
-          'tags': s.tags.take(12).toList(),
-          'language': s.language,
-          'rating': s.rating,
-        };
-      }).toList(),
-    };
-
-    final Map<String, dynamic> response = await aiRequest.requestJson(
-      systemPrompt: _profileSystemPrompt,
-      userPrompt: jsonEncode(payload),
-    );
-    final String summary = _boundedResponseString(response['summary'], 1200);
-
-    final List<AiXpPreference> preferences = <AiXpPreference>[];
-    final Object? rawPreferences = response['preferences'];
-    if (rawPreferences is List) {
-      for (final Object? item in rawPreferences) {
-        if (preferences.length >= _maxRemotePreferences || item is! Map) {
-          continue;
-        }
-        final Map<String, dynamic> map = Map<String, dynamic>.from(item);
-        final String name = _boundedResponseString(map['name'], 80);
-        final String description =
-            _boundedResponseString(map['description'], 500);
-        final double? confidence = (map['confidence'] as num?)?.toDouble();
-        if (name.isEmpty ||
-            description.isEmpty ||
-            confidence == null ||
-            !confidence.isFinite ||
-            confidence < 0 ||
-            confidence > 1) {
-          continue;
-        }
-        final List<String> evidenceTags = _validatedRemoteTags(
-          map['evidenceTags'],
-          limit: _maxRemoteEvidenceTags,
-        );
-        preferences.add(AiXpPreference(
-          name: name,
-          description: description,
-          confidence: confidence,
-          evidenceTags: evidenceTags,
-        ));
-      }
-    }
-
-    final List<AiXpSearchStrategy> strategies = <AiXpSearchStrategy>[];
-    final Object? rawStrategies = response['searchStrategies'];
-    if (rawStrategies is List) {
-      for (final Object? item in rawStrategies) {
-        if (strategies.length >= _maxRecommendationSearches || item is! Map) {
-          continue;
-        }
-        final Map<String, dynamic> map = Map<String, dynamic>.from(item);
-        final List<String> tags = _validatedRemoteTags(
-          map['tags'],
-          limit: _maxRemoteStrategyTags,
-        );
-        final String keyword = _boundedResponseString(map['keyword'], 120);
-        final String reason = _boundedResponseString(map['reason'], 500);
-        final AiXpSearchStrategy strategy = AiXpSearchStrategy(
-          tags: tags,
-          keyword: keyword,
-          reason: reason,
-        );
-        if (_isUsableSearchStrategy(strategy)) {
-          strategies.add(strategy);
-        }
-      }
-    }
-
-    if (summary.isEmpty || preferences.isEmpty || strategies.isEmpty) {
-      throw const FormatException(
-        'AI profile response requires summary, preferences, and searchStrategies',
-      );
-    }
-
-    return statisticalProfile.copyWith(
-      version: AiXpProfile.currentVersion,
-      summary: summary,
-      preferences: preferences,
-      searchStrategies: strategies,
-      generatedByRemoteAi: true,
-    );
-  }
-
-  Future<List<AiXpRankedCandidate>> _remoteRankCandidates({
-    required AiXpProfile profile,
-    required List<AiGallerySignal> candidates,
-  }) async {
-    if (candidates.isEmpty) {
-      return const <AiXpRankedCandidate>[];
-    }
-
-    final Map<int, AiGallerySignal> allowed = <int, AiGallerySignal>{
-      for (final AiGallerySignal signal in candidates) signal.gid: signal,
-    };
-    final Map<String, dynamic> response = await aiRequest.requestJson(
-      systemPrompt: _recommendationSystemPrompt,
-      userPrompt: jsonEncode(<String, dynamic>{
-        'locale': Intl.getCurrentLocale(),
-        'profile': <String, dynamic>{
-          'summary': profile.summary,
-          'preferences': profile.preferences
-              .map((AiXpPreference preference) => preference.toJson())
-              .toList(),
-          'searchStrategies': profile.searchStrategies
-              .map((AiXpSearchStrategy strategy) => strategy.toJson())
-              .toList(),
-        },
-        'candidates': candidates.map((AiGallerySignal signal) {
-          return <String, dynamic>{
-            'gid': signal.gid,
-            'title': _truncate(signal.title, 240),
-            'category': signal.category,
-            'tags': signal.tags.take(20).toList(),
-            'rating': signal.rating,
-            'pageCount': signal.pageCount,
-            'language': signal.language,
-            'uploader': _truncate(signal.uploader ?? '', 100),
-          };
-        }).toList(),
-      }),
-    );
-
-    final Object? rawRecommendations = response['recommendations'];
-    if (rawRecommendations is! List) {
-      throw const FormatException(
-          'AI recommendation response is missing recommendations[]');
-    }
-
-    final List<AiXpRankedCandidate> ranked = <AiXpRankedCandidate>[];
-    final Set<int> seen = <int>{};
-    for (final Object? item in rawRecommendations) {
-      if (ranked.length >= _maxRecommendations || item is! Map) {
-        continue;
-      }
-      final Map<String, dynamic> map = Map<String, dynamic>.from(item);
-      final int? gid = (map['gid'] as num?)?.toInt();
-      final double? score = (map['score'] as num?)?.toDouble();
-      final String reason = _boundedResponseString(map['reason'], 500);
-      if (gid == null ||
-          score == null ||
-          score < 0 ||
-          score > 100 ||
-          reason.isEmpty ||
-          !seen.add(gid)) {
-        continue;
-      }
-      final AiGallerySignal? signal = allowed[gid];
-      if (signal == null) {
-        continue;
-      }
-      ranked.add(AiXpRankedCandidate(
-        signal: signal,
-        score: score,
-        explanations: <AiXpScoreExplanation>[
-          AiXpScoreExplanation(
-            kind: 'remote_ai',
-            detail: reason,
-            contribution: score,
-          ),
-        ],
-      ));
-    }
-    if (rawRecommendations.isNotEmpty && ranked.isEmpty) {
-      throw const FormatException(
-          'AI recommendation response contains no valid candidates');
-    }
-    return ranked;
-  }
-
-  Future<AiXpOrganizationPlan> _remoteOrganizeFavorites({
-    required String requirements,
-    required List<String> categoryNames,
-  }) async {
-    final List<AiXpOrganizationMove> allMoves = <AiXpOrganizationMove>[];
-    final Set<int> moved = <int>{};
-    final List<List<AiGallerySignal>> chunks =
-        chunkList(_favoriteSignals, _orgRemoteChunkSize);
-
-    for (final List<AiGallerySignal> chunk in chunks) {
-      final Set<int> chunkGids =
-          chunk.map((AiGallerySignal signal) => signal.gid).toSet();
-      final Map<String, dynamic> userPayload = <String, dynamic>{
-        'requirements': requirements,
-        'categories': <Map<String, dynamic>>[
-          for (int i = 0; i < categoryNames.length; i++)
-            <String, dynamic>{'index': i, 'name': categoryNames[i]},
-        ],
-        'favorites': chunk.map((AiGallerySignal s) {
-          return <String, dynamic>{
-            'gid': s.gid,
-            'title': _truncate(s.title, 240),
-            'category': s.category,
-            'tags': s.tags.take(12).toList(),
-            'favoriteCategoryIndex': s.favoriteCategoryIndex,
-            'favoriteCategoryName': s.favoriteCategoryName,
-            // Never include cover URLs, tokens, or API keys.
-          };
-        }).toList(),
-      };
-
-      final Map<String, dynamic> response = await aiRequest.requestJson(
-        systemPrompt: _organizationSystemPrompt,
-        userPrompt: jsonEncode(userPayload),
-      );
-
-      final Object? rawMoves = response['moves'];
-      if (rawMoves is! List) {
-        throw const FormatException(
-            'AI organization response is missing moves[]');
-      }
-
-      for (final Object? item in rawMoves) {
-        if (item is! Map) {
-          continue;
-        }
-        final Map<String, dynamic> map = Map<String, dynamic>.from(item);
-        final int? gid = (map['gid'] as num?)?.toInt();
-        final int? targetIndex = (map['targetIndex'] as num?)?.toInt();
-        if (gid == null || targetIndex == null) {
-          continue;
-        }
-        if (!chunkGids.contains(gid) || moved.contains(gid)) {
-          continue;
-        }
-        if (targetIndex < 0 || targetIndex >= categoryNames.length) {
-          continue;
-        }
-        final AiGallerySignal? signal = _signalByGid[gid];
-        if (signal?.favoriteCategoryIndex == targetIndex) {
-          continue;
-        }
-        moved.add(gid);
-        allMoves.add(AiXpOrganizationMove(
-          gid: gid,
-          fromIndex: signal?.favoriteCategoryIndex,
-          targetIndex: targetIndex,
-          targetName: categoryNames[targetIndex],
-          matchedRule:
-              map['matchedRule'] as String? ?? map['rule'] as String? ?? '',
-          matchedTerm:
-              map['matchedTerm'] as String? ?? map['term'] as String? ?? '',
-        ));
-      }
-    }
-
-    // Keep local rule parse for UI display even when moves come from remote.
-    final List<AiXpOrganizationRule> rules =
-        _engine.parseOrganizationRules(requirements, categoryNames);
-    return AiXpOrganizationPlan(rules: rules, moves: allMoves);
-  }
-
-  Future<AiXpSearchIntent> _remoteParseSearchIntent(
-    String query,
-    AiXpSearchIntent localFallback,
-  ) async {
-    final Map<String, dynamic> response = await aiRequest.requestJson(
-      systemPrompt: _searchSystemPrompt,
-      userPrompt: jsonEncode(<String, dynamic>{
-        'query': query,
-        'localHint': localFallback.toJson(),
-      }),
-    );
-
-    final Object? rawCategories = response['categories'];
-    final Object? rawTags = response['tags'];
-    final Object? rawResidual = response['residualKeyword'];
-    if (rawCategories is! List || rawTags is! List || rawResidual is! String) {
-      throw const FormatException(
-        'AI search response requires categories[], tags[], and residualKeyword',
-      );
-    }
-
-    final String responseQuery =
-        _boundedResponseString(response['rawQuery'], 500);
-    final String rawQuery = responseQuery.isEmpty ? query : responseQuery;
-    final String? language = response['language'] is String
-        ? _boundedResponseString(response['language'], 40)
-        : null;
-    final bool? requireTorrent = response['requireTorrent'] as bool?;
-    final int? minimumRating = (response['minimumRating'] as num?)?.toInt();
-    final int? pageAtLeast = (response['pageAtLeast'] as num?)?.toInt();
-    final int? pageAtMost = (response['pageAtMost'] as num?)?.toInt();
-    if ((minimumRating != null && (minimumRating < 1 || minimumRating > 5)) ||
-        (pageAtLeast != null && pageAtLeast < 1) ||
-        (pageAtMost != null && pageAtMost < 1) ||
-        (pageAtLeast != null &&
-            pageAtMost != null &&
-            pageAtMost < pageAtLeast)) {
-      throw const FormatException('AI search response contains invalid bounds');
-    }
-
-    final List<String> categories = <String>[];
-    final Set<String> seenCategories = <String>{};
-    for (final Object? c in rawCategories) {
-      final String name = c.toString();
-      if (_isKnownCategory(name)) {
-        final String canonical = _canonicalCategory(name);
-        if (seenCategories.add(canonical)) {
-          categories.add(canonical);
-        }
-      }
-    }
-
-    final List<String> tags = _validatedRemoteTags(rawTags, limit: 20);
-
-    return AiXpSearchIntent(
-      rawQuery: rawQuery,
-      language: language?.isEmpty == true ? null : language,
-      requireTorrent: requireTorrent,
-      minimumRating: minimumRating,
-      pageAtLeast: pageAtLeast,
-      pageAtMost: pageAtMost,
-      categories: categories,
-      tags: tags,
-      xpPreference: response['xpPreference'] is String
-          ? _boundedResponseString(response['xpPreference'], 300)
-          : null,
-      residualKeyword: _truncate(rawResidual.trim(), 300),
-    );
-  }
-
-  static const String _profileSystemPrompt =
-      'You analyze compact statistics derived from an E-Hentai favorites library. '
-      'Write all human-facing text in the requested locale. Reply with one JSON object only. '
-      'Schema: {"summary":"<clear overview>","preferences":[{"name":"<theme>",'
-      '"description":"<what the evidence suggests>","confidence":<0..1>,'
-      '"evidenceTags":["namespace:key"]}],"searchStrategies":[{"tags":'
-      '["namespace:key"],"keyword":"<optional keyword>","reason":"<why this search fits>"}]}. '
-      'Return at least one preference and one usable search strategy. Do not diagnose the user, '
-      'invent private facts, request secrets, or echo raw payloads.';
-
-  static const String _recommendationSystemPrompt =
-      'You rank E-Hentai gallery candidates for the supplied preference profile. '
-      'Reply with one JSON object only, using only candidate gids. Schema: '
-      '{"recommendations":[{"gid":<int>,"score":<number 0..100>,'
-      '"reason":"<concise reason in requested locale>"}]}. Return at most 30 unique items '
-      'in best-first order. Base the decision on the profile and candidate metadata; do not '
-      'request or invent tokens, covers, credentials, or gids.';
-
-  static const String _organizationSystemPrompt =
-      'You reorganize E-Hentai favorite galleries into existing favorite categories. '
-      'Reply with a single JSON object only, no markdown. Schema: '
-      '{"moves":[{"gid":<int>,"targetIndex":<int>,"matchedRule":"<string>","matchedTerm":"<string>"}]}. '
-      'Only use gids from the provided favorites list. targetIndex must be a valid category index. '
-      'Do not invent categories. Prefer fewer, high-confidence moves. Never request or echo tokens, covers, or secrets.';
-
-  static const String _searchSystemPrompt =
-      'You convert a natural-language E-Hentai search request into structured JSON. '
-      'Reply with a single JSON object only, no markdown. Schema: '
-      '{"rawQuery":"<string>","language":"<string|null>","requireTorrent":<bool|null>,'
-      '"minimumRating":<int|null>,"pageAtLeast":<int|null>,"pageAtMost":<int|null>,'
-      '"categories":["Doujinshi"],"tags":["namespace:key"],"xpPreference":"<string|null>",'
-      '"residualKeyword":"<string>"}. '
-      'Always include categories, tags, and residualKeyword even when empty. Categories must be EH names. '
-      'Tags must be namespace:key. The localHint is only parsing evidence; your JSON is the final result. '
-      'Never include tokens, covers, or secrets.';
 
   // ---------------------------------------------------------------------------
   // Internal: cache / snapshot / profile rebuild
@@ -1857,83 +1433,6 @@ class AiXpService {
     }
   }
 
-  static Map<String, int> _countSignalValues(Iterable<String> values) {
-    final Map<String, int> counts = <String, int>{};
-    for (final String raw in values) {
-      final String value = raw.trim();
-      if (value.isNotEmpty) {
-        counts[value] = (counts[value] ?? 0) + 1;
-      }
-    }
-    final List<MapEntry<String, int>> ordered = counts.entries.toList()
-      ..sort((MapEntry<String, int> a, MapEntry<String, int> b) {
-        final int byCount = b.value.compareTo(a.value);
-        return byCount != 0 ? byCount : a.key.compareTo(b.key);
-      });
-    return <String, int>{
-      for (final MapEntry<String, int> e in ordered) e.key: e.value
-    };
-  }
-
-  static List<Map<String, dynamic>> _weightedPayload(
-    Map<String, double> weights,
-    int limit,
-    String nameKey,
-  ) {
-    final List<MapEntry<String, double>> entries = weights.entries
-        .where((MapEntry<String, double> entry) => entry.value.isFinite)
-        .toList()
-      ..sort((MapEntry<String, double> a, MapEntry<String, double> b) {
-        final int byWeight = b.value.compareTo(a.value);
-        return byWeight != 0 ? byWeight : a.key.compareTo(b.key);
-      });
-    return entries.take(limit).map((MapEntry<String, double> entry) {
-      return <String, dynamic>{nameKey: entry.key, 'weight': entry.value};
-    }).toList();
-  }
-
-  static List<String> _validatedRemoteTags(Object? raw, {required int limit}) {
-    if (raw is! List) {
-      return const <String>[];
-    }
-    final List<String> tags = <String>[];
-    final Set<String> seen = <String>{};
-    for (final Object? item in raw) {
-      final String normalized = AiXpEngine.normalizeTag(item.toString());
-      final int separator = normalized.indexOf(':');
-      if (separator <= 0 ||
-          separator >= normalized.length - 1 ||
-          !seen.add(normalized)) {
-        continue;
-      }
-      tags.add(normalized);
-      if (tags.length >= limit) {
-        break;
-      }
-    }
-    return tags;
-  }
-
-  static bool _isUsableSearchStrategy(AiXpSearchStrategy strategy) {
-    return strategy.keyword.trim().isNotEmpty ||
-        _validatedRemoteTags(strategy.tags, limit: _maxRemoteStrategyTags)
-            .isNotEmpty;
-  }
-
-  static String _boundedResponseString(Object? value, int maxLength) {
-    if (value is! String) {
-      return '';
-    }
-    return _truncate(value.trim(), maxLength);
-  }
-
-  static String _truncate(String value, int maxLength) {
-    if (value.length <= maxLength) {
-      return value;
-    }
-    return value.substring(0, maxLength);
-  }
-
   void _report(AiXpProgressCallback? onProgress, String phase,
       {int current = 0, int total = 0}) {
     onProgress
@@ -1989,7 +1488,7 @@ class AiXpService {
       SearchConfig config, List<String> categories) {
     config.disableAllCategories();
     for (final String raw in categories) {
-      switch (_canonicalCategory(raw)) {
+      switch (AiXpEngine.canonicalCategory(raw)) {
         case 'Doujinshi':
           config.includeDoujinshi = true;
           break;
@@ -2022,42 +1521,5 @@ class AiXpService {
           break;
       }
     }
-  }
-
-  /// Alias (lower-case) -> canonical EH category name.
-  ///
-  /// Every canonical value is also present as its own lower-cased key, so a
-  /// single map lookup on the lower-cased input resolves both aliases and
-  /// already-canonical names.
-  static const Map<String, String> _categoryCanonical = <String, String>{
-    'doujinshi': 'Doujinshi',
-    'manga': 'Manga',
-    'artist cg': 'Artist CG',
-    'artistcg': 'Artist CG',
-    'artist_cg': 'Artist CG',
-    'game cg': 'Game CG',
-    'gamecg': 'Game CG',
-    'game_cg': 'Game CG',
-    'western': 'Western',
-    'non-h': 'Non-H',
-    'nonh': 'Non-H',
-    'non_h': 'Non-H',
-    'image set': 'Image Set',
-    'imageset': 'Image Set',
-    'image_set': 'Image Set',
-    'cosplay': 'Cosplay',
-    'asian porn': 'Asian Porn',
-    'asianporn': 'Asian Porn',
-    'asian_porn': 'Asian Porn',
-    'misc': 'Misc',
-  };
-
-  static bool _isKnownCategory(String raw) {
-    return _categoryCanonical.containsKey(raw.trim().toLowerCase());
-  }
-
-  static String _canonicalCategory(String raw) {
-    final String trimmed = raw.trim();
-    return _categoryCanonical[trimmed.toLowerCase()] ?? trimmed;
   }
 }

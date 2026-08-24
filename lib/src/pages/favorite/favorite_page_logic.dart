@@ -23,6 +23,7 @@ import '../../model/search_config.dart';
 import '../../service/local_config_service.dart';
 import '../../utils/eh_spider_parser.dart';
 import '../../utils/favorite_dedupe_util.dart';
+import '../../utils/favorite_enumerate_util.dart';
 import '../../service/log.dart';
 import '../../utils/snack_util.dart';
 import '../../utils/toast_util.dart';
@@ -420,61 +421,18 @@ class FavoritePageLogic extends BasePageLogic {
   }
 
   /// Enumerate every server favorite, ignoring the page's active filters.
-  ///
-  /// Guards against repeated pagination cursors and duplicate gids.
-  Future<List<Gallery>> _enumerateAllServerFavorites(EHBatchProgressController progress) async {
-    final SearchConfig searchConfig = SearchConfig(searchType: SearchType.favorite);
-    final List<Gallery> all = <Gallery>[];
-    final Set<int> seenGids = <int>{};
-    final Set<String> seenCursors = <String>{};
-    String? nextGid;
-    int pages = 0;
-
+  Future<List<Gallery>> _enumerateAllServerFavorites(EHBatchProgressController progress) {
     progress.clearProgress();
 
-    while (!progress.isCancelled) {
-      if (nextGid != null && !seenCursors.add(nextGid)) {
-        log.warning('favorite enumerate stopped: repeated cursor $nextGid');
-        break;
-      }
-      if (pages >= _maxFavoritePages) {
-        log.warning('favorite enumerate stopped at the $_maxFavoritePages page cap (${all.length} galleries)');
-        break;
-      }
-      pages++;
-
-      final GalleryPageInfo page;
-      try {
-        page = await ehRequest.requestGalleryPage(
-          nextGid: nextGid,
-          searchConfig: searchConfig,
-          parser: EHSpiderParser.galleryPage2GalleryPageInfo,
-        );
-      } on DioException catch (e) {
-        log.error('enumerate all favorites fail', e.errorMsg);
-        rethrow;
-      } on EHSiteException catch (e) {
-        log.error('enumerate all favorites fail', e.message);
-        rethrow;
-      }
-
-      for (final Gallery gallery in page.galleries) {
-        if (seenGids.add(gallery.gid)) {
-          all.add(gallery);
-        }
-      }
-
-      // Total is unknown while paging; keep the bar indeterminate and show count in phase.
-      progress.clearProgress();
-      progress.setPhase('${'loadingAllFavorites'.tr} (${all.length})');
-
-      if (page.nextGid == null) {
-        break;
-      }
-      nextGid = page.nextGid;
-    }
-
-    return all;
+    return enumerateAllServerFavorites(
+      maxPages: _maxFavoritePages,
+      isCancelled: () => progress.isCancelled,
+      onPageLoaded: (int loadedCount) {
+        // Total is unknown while paging; keep the bar indeterminate and show the count in the phase.
+        progress.clearProgress();
+        progress.setPhase('${'loadingAllFavorites'.tr} ($loadedCount)');
+      },
+    );
   }
 
   Future<void> _refreshAfterDedupe() async {
