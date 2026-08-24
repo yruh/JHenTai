@@ -194,22 +194,27 @@ List<List<T>> chunkList<T>(List<T> items, int size) {
 ///
 /// When [isCancelled] becomes true, no new tasks are started; in-flight tasks
 /// are still awaited. [onProgress] is invoked after each item finishes
-/// (success or error).
+/// (success or error). [completedOffset] includes items resolved before this
+/// batch in both the completed and total values reported to [onProgress].
 Future<void> runWithConcurrency<T>({
   required List<T> items,
   required int concurrency,
   required Future<void> Function(T item) action,
   required bool Function() isCancelled,
+  int completedOffset = 0,
   void Function(int completed, int total)? onProgress,
 }) async {
+  assert(completedOffset >= 0);
   if (items.isEmpty) {
     return;
   }
 
-  final int total = items.length;
-  final int effectiveConcurrency = concurrency < 1 ? 1 : (concurrency > total ? total : concurrency);
+  final int itemCount = items.length;
+  final int total = completedOffset + itemCount;
+  final int effectiveConcurrency =
+      concurrency < 1 ? 1 : (concurrency > itemCount ? itemCount : concurrency);
   int nextIndex = 0;
-  int completed = 0;
+  int completed = completedOffset;
 
   Future<void> worker() async {
     while (true) {
@@ -218,7 +223,7 @@ Future<void> runWithConcurrency<T>({
       if (isCancelled()) {
         return;
       }
-      if (nextIndex >= total) {
+      if (nextIndex >= itemCount) {
         return;
       }
       final int index = nextIndex++;

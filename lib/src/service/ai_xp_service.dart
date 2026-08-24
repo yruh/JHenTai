@@ -3,6 +3,7 @@ import 'dart:convert';
 
 import 'package:dio/dio.dart';
 import 'package:intl/intl.dart';
+import 'package:jhentai/src/database/database.dart';
 import 'package:jhentai/src/enum/config_enum.dart';
 import 'package:jhentai/src/exception/eh_site_exception.dart';
 import 'package:jhentai/src/extension/dio_exception_extension.dart';
@@ -516,15 +517,17 @@ class AiXpService {
     int failure = missing;
     final int total = uniqueGids.length;
     final Set<int> removedGids = <int>{};
-    _report(onProgress, phaseRemovingDuplicates, current: 0, total: total);
+    _report(onProgress, phaseRemovingDuplicates,
+        current: missing, total: total);
 
     await runWithConcurrency<Gallery>(
       items: targets,
       concurrency: _mutationConcurrency,
+      completedOffset: missing,
       isCancelled: () => false,
-      onProgress: (int completed, int _) {
+      onProgress: (int completed, int progressTotal) {
         _report(onProgress, phaseRemovingDuplicates,
-            current: completed, total: total);
+            current: completed, total: progressTotal);
       },
       action: (Gallery gallery) async {
         try {

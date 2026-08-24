@@ -287,5 +287,24 @@ void main() {
       );
       expect(progressSnapshots, [1, 2, 3]);
     });
+
+    test('includes pre-completed items in progress totals', () async {
+      final List<({int completed, int total})> progressSnapshots =
+          <({int completed, int total})>[];
+      await runWithConcurrency<int>(
+        items: [1, 2],
+        concurrency: 1,
+        completedOffset: 1,
+        isCancelled: () => false,
+        onProgress: (int completed, int total) {
+          progressSnapshots.add((completed: completed, total: total));
+        },
+        action: (int item) async {},
+      );
+      expect(progressSnapshots, [
+        (completed: 2, total: 3),
+        (completed: 3, total: 3),
+      ]);
+    });
   });
 }
