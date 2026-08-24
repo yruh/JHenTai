@@ -2,7 +2,6 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:core';
 import 'dart:io' as io;
-import 'dart:isolate';
 
 import 'package:collection/collection.dart';
 import 'package:dio/dio.dart';
@@ -61,8 +60,8 @@ import 'download_path_resolver.dart';
 import 'eh_image_exception_matcher.dart';
 
 part 'gallery_download_task_runner.dart';
-part 'gallery_upgrade_migrator.dart';
 part 'gallery_metadata_store.dart';
+part 'gallery_upgrade_migrator.dart';
 
 /// Responsible for local images meta-data and download all images of a gallery
 GalleryDownloadService galleryDownloadService = GalleryDownloadService();
@@ -118,7 +117,13 @@ class GalleryDownloadService extends GetxController with GridBasePageServiceMixi
   /// Backward-compat alias — external callers read this const to locate the
   /// metadata file. The canonical home is now [_GalleryMetadataStore].
   static const String metadataFileName = _GalleryMetadataStore.metadataFileName;
-  static const int _priorityBase = 100000000;
+  /// One priority level occupies this many scheduler-priority units. Sized so
+  /// the insert-time term below (epoch seconds * 2000, ~3.6e12 in 2026 and
+  /// growing ~2000/sec) plus the per-gallery serialNo slot (max 1999) always
+  /// fits within a single level — otherwise insert time would swamp the
+  /// user-assigned gallery priority and high-priority galleries would download
+  /// in insert-time order instead.
+  static const int _priorityBase = 1000000000000000;
 
   final Completer<bool> _completer = Completer();
 
@@ -794,20 +799,14 @@ class GalleryDownloadService extends GetxController with GridBasePageServiceMixi
       return 0;
     }
 
-    /// Parse all metadata files in a single background isolate. Each parse
-    /// is pure (static [_GalleryMetadataStore.readForRestore]); only primitive
-    /// paths cross the isolate boundary.
-    final List<({GalleryDownloadedData gallery, List<GalleryImage?> images})?> restoredList = await Isolate.run(() {
-      return galleryDirPaths.map((p) {
-        try {
-          return _GalleryMetadataStore.readForRestore(io.Directory(p));
-        } catch (e, st) {
-          // Logging from a worker isolate may not reach file handlers; swallow
-          // here so one bad metadata file doesn't abort the whole restore.
-          return null;
-        }
-      }).toList();
-    });
+    final List<({GalleryDownloadedData gallery, List<GalleryImage?> images})?> restoredList = galleryDirPaths.map((p) {
+      try {
+        return _GalleryMetadataStore.readForRestore(io.Directory(p));
+      } catch (e, st) {
+        log.error('Read gallery metadata failed: $p', e, st);
+        return null;
+      }
+    }).toList();
 
     int restoredCount = 0;
     for (final ({GalleryDownloadedData gallery, List<GalleryImage?> images})? restored in restoredList) {
@@ -1032,7 +1031,9 @@ class GalleryDownloadService extends GetxController with GridBasePageServiceMixi
   ///     2.1.3 if priority is same, download all galleries simultaneously
   ///   2.2 For each gallery, previous image should be downloaded earlier and images with same [serialNo] has the same priority no matter which gallery they belong to
   ///
-  /// Because a gallery has most 2000 images, we assign 2000 numbers to each gallery
+  /// Because a gallery has most 2000 images, we assign 2000 numbers to each
+  /// gallery. The insert-time term below must stay under [_priorityBase] so the
+  /// user-assigned priority always dominates the ordering.
   int _computeGalleryTaskPriority(GalleryDownloadInfo gallery) {
     if (_taskHasBeenPausedOrRemoved(gallery)) {
       return 0;
@@ -1533,8 +1534,7 @@ class GalleryDownloadRequest {
 /// stores the original URL). For regular galleries, always use `url`.
 ///
 /// Free function (not a method on [GalleryImage]) so it can be called from
-/// any context — including the metadata store's [Isolate.run] restore path,
-/// which only has a [GalleryDownloadedData] (parsed from JSON) and no access
+/// any context — only has a [GalleryDownloadedData] (parsed from JSON) and no access
 /// to the [GalleryDownloadInfo] singleton.
 String _downloadUrlFor(GalleryDownloadedData gallery, GalleryImage image) {
   return gallery.downloadOriginalImage ? (image.originalImageUrl ?? image.url) : image.url;
@@ -1554,9 +1554,10 @@ class GalleryDownloadInfo implements Comparable<GalleryDownloadInfo> {
   final String? oldVersionGalleryUrl;
   final String? sanitizedTitle;
 
-  /// Pre-parsed `MMddHHmmss` of [insertTime]. Cached at construction so
+  /// Insert-time as epoch seconds, cached at construction so
   /// [_computeGalleryTaskPriority] avoids `DateFormat.parse` on every image
-  /// task submit.
+  /// task submit. Epoch-based (unlike wall-clock `MMddHHmmss`) so the
+  /// within-priority insert-time order stays monotonic across year boundaries.
   late final int _insertTimePriority = _parseInsertTimePriority();
 
   int get insertTimePriority => _insertTimePriority;
@@ -1857,7 +1858,7 @@ class GalleryDownloadInfo implements Comparable<GalleryDownloadInfo> {
   int _parseInsertTimePriority() {
     try {
       final DateTime dt = DateFormat('yyyy-MM-dd HH:mm:ss').parse(insertTime);
-      return int.parse(DateFormat('MMddHHmmss').format(dt));
+      return dt.millisecondsSinceEpoch ~/ 1000;
     } catch (_) {
       return 0;
     }
