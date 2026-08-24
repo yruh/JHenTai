@@ -27,6 +27,17 @@ def keystorePropertiesFile = rootProject.file('key.properties')
 if (keystorePropertiesFile.exists()) {
     keystoreProperties.load(new FileInputStream(keystorePropertiesFile))
 }
+def releaseSigningKeys = ['keyAlias', 'keyPassword', 'storeFile', 'storePassword']
+def hasReleaseSigning = keystorePropertiesFile.exists() && releaseSigningKeys.every { key ->
+    def value = keystoreProperties[key]
+    value != null && !value.toString().trim().isEmpty()
+}
+if (hasReleaseSigning) {
+    hasReleaseSigning = file(keystoreProperties['storeFile']).exists()
+}
+if (System.getenv('GITHUB_REF')?.startsWith('refs/tags/') && !hasReleaseSigning) {
+    throw new GradleException('Release tags require a complete Android signing configuration')
+}
 
 android {
     namespace 'top.jtmonster.jhentai'
@@ -55,17 +66,19 @@ android {
 
     signingConfigs {
         release {
-            keyAlias keystoreProperties['keyAlias']
-            keyPassword keystoreProperties['keyPassword']
-            storeFile keystoreProperties['storeFile'] ? file(keystoreProperties['storeFile']) : null
-            storePassword keystoreProperties['storePassword']
+            if (hasReleaseSigning) {
+                keyAlias keystoreProperties['keyAlias']
+                keyPassword keystoreProperties['keyPassword']
+                storeFile file(keystoreProperties['storeFile'])
+                storePassword keystoreProperties['storePassword']
+            }
         }
     }
 
     /// If you want to use debug signing config, use default [signingConfigs.debug]
     buildTypes {
         release {
-            signingConfig signingConfigs.release
+            signingConfig hasReleaseSigning ? signingConfigs.release : signingConfigs.debug
         }
     }
 }

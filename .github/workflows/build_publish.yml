@@ -69,13 +69,34 @@ jobs:
       # Add Android keystore
       - name: Setup Android keystore
         if: matrix.target == 'Android'
+        shell: bash
+        env:
+          ENCODED_KEYSTORE: ${{ secrets.ENCODED_KEYSTORE }}
+          KEY_PROPERTIES: ${{ secrets.KEY_PROPERTIES }}
         run: |
-          echo "${{ secrets.ENCODED_KEYSTORE }}" | base64 -di > android/app/upload-keystore.jks
-          echo "${{ secrets.KEY_PROPERTIES }}" > android/key.properties
-      # Add JHenTai api serret
+          if [ -n "$ENCODED_KEYSTORE" ] && [ -n "$KEY_PROPERTIES" ]; then
+            printf '%s' "$ENCODED_KEYSTORE" | base64 --decode > android/app/upload-keystore.jks
+            printf '%s\n' "$KEY_PROPERTIES" > android/key.properties
+          elif [[ "$GITHUB_REF" == refs/tags/* ]]; then
+            echo "Release tags require Android signing secrets" >&2
+            exit 1
+          else
+            echo "Android signing secrets unavailable; Gradle will use debug signing"
+          fi
+      # Add JHenTai API secret
       - name: Setup JHenTai API Secret
+        shell: bash
+        env:
+          JH_API_SECRET_CONFIG: ${{ secrets.JH_API_SECRET_CONFIG }}
         run: |
-          echo "${{ secrets.JH_API_SECRET_CONFIG }}" > lib/src/config/jh_api_secret_config.dart
+          if [ -n "$JH_API_SECRET_CONFIG" ]; then
+            printf '%s\n' "$JH_API_SECRET_CONFIG" > lib/src/config/jh_api_secret_config.dart
+          elif [[ "$GITHUB_REF" == refs/tags/* ]]; then
+            echo "Release tags require JH_API_SECRET_CONFIG" >&2
+            exit 1
+          else
+            echo "JH_API_SECRET_CONFIG unavailable; keeping tracked fallback"
+          fi
       # Setup Flutter
       - name: Setup Flutter
         uses: subosito/flutter-action@v2
@@ -93,7 +114,7 @@ jobs:
         with:
           key: ${{ matrix.cache_pod_key }}
           path: ${{ matrix.cache_pod_path }}
-          restore-keys: ${{ matrix.cache_key }}-${{ hashFiles(matrix.cache_pod_restore_keys_hash_file)}}
+          restore-keys: ${{ matrix.cache_pod_key }}-${{ hashFiles(matrix.cache_pod_restore_keys_hash_file)}}
       # Setup JDK
       - name: Setup JDK 17 (Android)
         if: matrix.target == 'Android'
@@ -129,7 +150,7 @@ jobs:
           mv app-x86_64-release.apk JHenTai-${{ steps.get_version.outputs.version }}-x64.apk
       # Build iOS .ipa
       - name: Build iOS
-        if: matrix.target == 'ios'
+        if: matrix.target == 'iOS'
         run: |
           flutter precache --ios
           cd ios
