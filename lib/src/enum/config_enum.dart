@@ -5,6 +5,7 @@ enum ConfigEnum {
   migrateGalleryHistory('migrateGalleryHistory'),
   migrateStorageConfig('migrateStorageConfig'),
   renameGallerysPageLogicKey('renameGallerysPageLogicKey'),
+  tapZoneGuideShown('tapZoneGuideShown'),
 
   /// settings
   favoriteSetting('favoriteSetting'),
@@ -30,6 +31,7 @@ enum ConfigEnum {
   windowWidth('windowWidth'),
   windowHeight('windowHeight'),
   leftColumnWidthRatio('leftColumnWidthRatio'),
+  frameRateMode('frameRateMode'),
 
   /// config
   ehCookie('eh_cookies'),
