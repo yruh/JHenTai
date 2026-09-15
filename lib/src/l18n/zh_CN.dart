@@ -104,7 +104,7 @@ class zh_CN {
       'refreshIgneousFailed': '刷新Igneous失败',
 
       /// request
-      'sadPanda': 'Sad Panda(无响应数据). 解决参考Github Wiki: https://github.com/jiangtian616/JHenTai/wiki/%E5%B8%B8%E8%A7%81%E9%97%AE%E9%A2%98',
+      'sadPanda': 'Sad Panda(无响应数据). 解决参考Github Wiki: https://github.com/jiangtian616/JHenTai/wiki/%E5%B8%B8%E8%A7%81%E9%97%AE%E9%A2%98，如果你看得懂中文请不要到处截图询问。',
       'sadPandaReferLink': 'https://github.com/jiangtian616/JHenTai/wiki/%E5%B8%B8%E8%A7%81%E9%97%AE%E9%A2%98',
 
       /// gallery card
@@ -519,6 +519,8 @@ class zh_CN {
       'tapZoneActionPrevPage': '上一页',
       'tapZoneActionNextPage': '下一页',
       'tapZoneActionToggleMenu': '切换菜单',
+      'tapZoneActionFlipLeft': '向左翻页',
+      'tapZoneActionFlipRight': '向右翻页',
       'tapZoneLeftColumnRatio': '左列宽度',
       'tapZoneMiddleColumnRatio': '中列宽度',
       'tapZoneRightColumnRatio': '右列宽度',
@@ -832,6 +834,9 @@ favnote：匹配收藏备注
       'checkInSuccess': '签到成功',
       'checkInSuccessHint': '获得GP：%s，当前总GP：%s。',
       'pauseDownloadByInvalidArchiveBotKey': '归档Bot设置无效，下载已暂停',
+      'archiveBotNotConfigured': '归档机器人未配置，前往设置？',
+      'getBotCostFailed': '获取Bot花费失败',
+      'archiveBotShort': 'Bot',
       'chooseArchiveParseSource': '修改解析来源',
       'official': '官方',
       'archiveBot': '归档机器人',
@@ -927,7 +932,7 @@ favnote：匹配收藏备注
       /// tag dialog actions
       'tagActionAccurate': '准确',
       'tagActionInaccurate': '不准确',
-      'tagActionFollow': '关注',
+      'tagActionFollow': '关注标签',
       'tagActionHide': '屏蔽标签',
       'tagActionTagSets': '管理标签集',
       'tagActionVoteUpTooltip': '投票认为此标签适用于当前画廊',
