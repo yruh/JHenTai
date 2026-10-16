@@ -360,8 +360,7 @@ class FavoritePageLogic extends BasePageLogic {
             '',
             ...duplicates.take(_dedupePreviewLimit).map((Gallery g) => '• ${g.title}'),
             if (duplicates.length > _dedupePreviewLimit) '…',
-          ].join('
-'),
+          ].join('\n'),
         ),
       );
       if (confirmed != true) {
