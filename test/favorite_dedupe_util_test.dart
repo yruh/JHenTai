@@ -110,6 +110,23 @@ void main() {
       expect(duplicates.map((e) => e.id).toList(), [3, 4, 5]);
     });
 
+    test('priorityOf keeps the highest-priority item per key', () {
+      final List<({int id, String category, String title})> items = [
+        (id: 1, category: 'Doujinshi', title: 'Alpha'),
+        (id: 9, category: 'Doujinshi', title: 'alpha'),
+        (id: 5, category: 'Doujinshi', title: 'Alpha'),
+      ];
+
+      final List<({int id, String category, String title})> duplicates = findFavoriteDuplicates(
+        items: items,
+        categoryOf: (item) => item.category,
+        titleOf: (item) => item.title,
+        priorityOf: (item) => item.id,
+      );
+
+      expect(duplicates.map((e) => e.id).toList(), [1, 5]);
+    });
+
     test('returns empty when all unique', () {
       final List<({String category, String title})> items = [
         (category: 'A', title: '1'),

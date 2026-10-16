@@ -80,8 +80,8 @@ class AiFavoriteSnapshotEntry {
         : Map<String, dynamic>.from(rawSignal as Map);
     return AiFavoriteSnapshotEntry(
       signal: AiGallerySignal.fromJson(signalMap),
-      token: json['token'] as String? ?? '',
-      isEH: json['isEH'] as bool? ?? true,
+      token: json['token'] is String ? json['token'] as String : '',
+      isEH: json['isEH'] is bool ? json['isEH'] as bool : true,
     );
   }
 
@@ -184,12 +184,14 @@ class AiFavoriteSnapshot {
     final Object? rawEntries = json['entries'];
     if (rawEntries is List) {
       for (final Object? item in rawEntries) {
-        if (item is Map<String, dynamic>) {
-          entries.add(AiFavoriteSnapshotEntry.fromJson(item));
-        } else if (item is Map) {
-          entries.add(AiFavoriteSnapshotEntry.fromJson(
-              Map<String, dynamic>.from(item)));
+        if (item is! Map) {
+          continue;
         }
+        // Skip a single corrupt entry instead of discarding the whole snapshot.
+        try {
+          entries.add(AiFavoriteSnapshotEntry.fromJson(
+              item is Map<String, dynamic> ? item : Map<String, dynamic>.from(item)));
+        } catch (_) {}
       }
     }
 

@@ -17,6 +17,7 @@ import 'package:jhentai/src/model/gallery_tag.dart';
 import 'package:jhentai/src/model/search_config.dart';
 import 'package:jhentai/src/network/ai_xp_remote.dart';
 import 'package:jhentai/src/network/eh_request.dart';
+import 'package:jhentai/src/service/isolate_service.dart';
 import 'package:jhentai/src/service/local_config_service.dart';
 import 'package:jhentai/src/service/log.dart';
 import 'package:jhentai/src/setting/ai_setting.dart';
@@ -234,7 +235,7 @@ class AiXpService {
       if (raw == null || raw.isEmpty) {
         _profile = null;
       } else {
-        final Object? decoded = jsonDecode(raw);
+        final Object? decoded = await isolateService.jsonDecodeAsync(raw);
         if (decoded is! Map) {
           log.warning('aiXpProfile config is not a JSON object');
           _profile = null;
@@ -651,7 +652,13 @@ class AiXpService {
             current: completed, total: total);
       },
       action: (AiXpOrganizationMove move) async {
-        final Gallery gallery = _galleryByGid[move.gid]!;
+        // The cache may be replaced by a concurrent refresh while moves are in flight.
+        final Gallery? gallery = _galleryByGid[move.gid];
+        if (gallery == null) {
+          failure++;
+          log.warning('applyOrganizationMoves: gallery vanished from cache gid=${move.gid}');
+          return;
+        }
         try {
           final GalleryNote galleryNote =
               await ehRequest.requestPopupPage<GalleryNote>(
@@ -1304,7 +1311,7 @@ class AiXpService {
         return false;
       }
 
-      final Object? decoded = jsonDecode(raw);
+      final Object? decoded = await isolateService.jsonDecodeAsync(raw);
       if (decoded is! Map) {
         log.warning(
             'aiFavoriteSnapshot config is not a JSON object (owner=$ownerKey)');
@@ -1403,7 +1410,7 @@ class AiXpService {
       await localConfigService.write(
         configKey: ConfigEnum.aiFavoriteSnapshot,
         subConfigKey: ownerKey,
-        value: jsonEncode(snapshot.toJson()),
+        value: await isolateService.jsonEncodeAsync(snapshot.toJson()),
       );
     } catch (e, s) {
       // Persistence failure must not wipe an older on-disk snapshot already written.

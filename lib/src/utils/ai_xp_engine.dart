@@ -373,7 +373,7 @@ class AiXpEngine {
         return a.detail.compareTo(b.detail);
       });
       final List<AiXpScoreExplanation> trimmed = explanations.length > maxExplanations
-          ? explanations.sublist(0, maxExplanations)
+          ? explanations.sublist(0, math.max(0, maxExplanations))
           : explanations;
 
       scored.add(AiXpRankedCandidate(
@@ -387,7 +387,7 @@ class AiXpEngine {
 
     if (!applyUploaderDiversity || scored.isEmpty) {
       if (limit != null && scored.length > limit) {
-        return scored.sublist(0, limit);
+        return scored.sublist(0, math.max(0, limit));
       }
       return scored;
     }
@@ -425,7 +425,7 @@ class AiXpEngine {
 
     diversified.sort(_compareRanked);
     if (limit != null && diversified.length > limit) {
-      return diversified.sublist(0, limit);
+      return diversified.sublist(0, math.max(0, limit));
     }
     return diversified;
   }
@@ -800,7 +800,9 @@ class AiXpEngine {
       final Match? m = re.firstMatch(remaining);
       if (m != null) {
         final double value = double.tryParse(m.group(1)!) ?? 0;
-        minimumRating = value.round().clamp(1, 5).toInt();
+        if (value > 0) {
+          minimumRating = value.round().clamp(1, 5).toInt();
+        }
         remaining = remaining.replaceFirst(re, ' ');
         break;
       }
@@ -811,7 +813,7 @@ class AiXpEngine {
     // claim the number in "max pages: 30" and record it as a minimum.
     final List<RegExp> maxPagePatterns = <RegExp>[
       RegExp(
-        r'(?:max(?:imum)?\s*pages?|pages?)\s*[<=:：]\s*(\d+)',
+        r'(?:max(?:imum)?\s*pages?\s*[<=:：]?|pages?\s*<=?)\s*(\d+)',
         caseSensitive: false,
       ),
       RegExp(r'at\s+most\s+(\d+)\s*pages?', caseSensitive: false),
@@ -896,26 +898,34 @@ class AiXpEngine {
     }
     // Strip common Pixiv-style popularity suffixes if present ("1000users入り").
     // り = hiragana り, リ = katakana リ (both spellings occur in the wild).
-    tag = tag.replaceFirst(RegExp(r'\d+users入[りリ]?$'), '');
-    tag = tag.replaceAll(RegExp(r'\s+'), '_');
-    tag = tag.replaceAll(RegExp(r'_+'), '_');
-    tag = tag.replaceAll(RegExp(r'^_|_$'), '');
+    tag = tag.replaceFirst(_pixivSuffixRe, '');
+    tag = tag.replaceAll(_whitespaceRe, '_');
+    tag = tag.replaceAll(_multiUnderscoreRe, '_');
+    tag = tag.replaceAll(_edgeUnderscoreRe, '');
     return tag;
   }
+
+  // Hoisted so hot loops over 10k+ favorites don't recompile them per call.
+  static final RegExp _pixivSuffixRe = RegExp(r'\d+users入[りリ]?$');
+  static final RegExp _whitespaceRe = RegExp(r'\s+');
+  static final RegExp _multiUnderscoreRe = RegExp(r'_+');
+  static final RegExp _edgeUnderscoreRe = RegExp(r'^_|_$');
+  static final RegExp _titleBracketRe = RegExp(r'[\[\]\(\)【】（）{}]');
+  static final RegExp _titleTokenRe = RegExp(
+    r'[a-z0-9]{2,}'
+    r'|[\u4e00-\u9fff]+'
+    r'|[\u3040-\u309f]+'
+    r'|[\u30a0-\u30ff]+'
+    r'|[\uac00-\ud7af]+',
+  );
 
   /// Tokenize a gallery title into lowercase terms for the title profile.
   ///
   /// Keeps Latin alphanumerics (len >= 2), CJK ideographs, Japanese
   /// hiragana/katakana runs, and Korean Hangul syllable runs.
   static List<String> tokenizeTitle(String title) {
-    final String cleaned = title.toLowerCase().replaceAll(RegExp(r'[\[\]\(\)【】（）{}]'), ' ');
-    final Iterable<RegExpMatch> matches = RegExp(
-      r'[a-z0-9]{2,}'
-      r'|[\u4e00-\u9fff]+'
-      r'|[\u3040-\u309f]+'
-      r'|[\u30a0-\u30ff]+'
-      r'|[\uac00-\ud7af]+',
-    ).allMatches(cleaned);
+    final String cleaned = title.toLowerCase().replaceAll(_titleBracketRe, ' ');
+    final Iterable<RegExpMatch> matches = _titleTokenRe.allMatches(cleaned);
     final List<String> tokens = <String>[];
     final Set<String> seen = <String>{};
     for (final RegExpMatch m in matches) {

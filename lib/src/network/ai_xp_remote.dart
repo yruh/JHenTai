@@ -1,8 +1,8 @@
 import 'dart:convert';
 
-import 'package:intl/intl.dart';
 import 'package:jhentai/src/model/ai_xp.dart';
 import 'package:jhentai/src/network/ai_request.dart';
+import 'package:jhentai/src/setting/preference_setting.dart';
 import 'package:jhentai/src/utils/ai_xp_engine.dart';
 import 'package:jhentai/src/utils/favorite_dedupe_util.dart';
 
@@ -45,7 +45,7 @@ class AiXpRemote {
           });
 
     final Map<String, dynamic> payload = <String, dynamic>{
-      'locale': Intl.getCurrentLocale(),
+      'locale': preferenceSetting.locale.value.toString(),
       'favoriteCount': signals.length,
       'categoryCounts': _countSignalValues(
           signals.map((AiGallerySignal s) => s.category)),
@@ -92,7 +92,7 @@ class AiXpRemote {
         final String name = boundedString(map['name'], 80);
         final String description =
             boundedString(map['description'], 500);
-        final double? confidence = (map['confidence'] as num?)?.toDouble();
+        final double? confidence = asDouble(map['confidence']);
         if (name.isEmpty ||
             description.isEmpty ||
             confidence == null ||
@@ -168,7 +168,7 @@ class AiXpRemote {
     final Map<String, dynamic> response = await aiRequest.requestJson(
       systemPrompt: _recommendationSystemPrompt,
       userPrompt: jsonEncode(<String, dynamic>{
-        'locale': Intl.getCurrentLocale(),
+        'locale': preferenceSetting.locale.value.toString(),
         'profile': <String, dynamic>{
           'summary': profile.summary,
           'preferences': profile.preferences
@@ -206,8 +206,8 @@ class AiXpRemote {
         continue;
       }
       final Map<String, dynamic> map = Map<String, dynamic>.from(item);
-      final int? gid = (map['gid'] as num?)?.toInt();
-      final double? score = (map['score'] as num?)?.toDouble();
+      final int? gid = asInt(map['gid']);
+      final double? score = asDouble(map['score']);
       final String reason = boundedString(map['reason'], 500);
       if (gid == null ||
           score == null ||
@@ -289,8 +289,8 @@ class AiXpRemote {
           continue;
         }
         final Map<String, dynamic> map = Map<String, dynamic>.from(item);
-        final int? gid = (map['gid'] as num?)?.toInt();
-        final int? targetIndex = (map['targetIndex'] as num?)?.toInt();
+        final int? gid = asInt(map['gid']);
+        final int? targetIndex = asInt(map['targetIndex']);
         if (gid == null || targetIndex == null) {
           continue;
         }
@@ -310,10 +310,8 @@ class AiXpRemote {
           fromIndex: signal?.favoriteCategoryIndex,
           targetIndex: targetIndex,
           targetName: categoryNames[targetIndex],
-          matchedRule:
-              map['matchedRule'] as String? ?? map['rule'] as String? ?? '',
-          matchedTerm:
-              map['matchedTerm'] as String? ?? map['term'] as String? ?? '',
+          matchedRule: boundedString(map['matchedRule'] ?? map['rule'], 200),
+          matchedTerm: boundedString(map['matchedTerm'] ?? map['term'], 200),
         ));
       }
     }
@@ -348,10 +346,10 @@ class AiXpRemote {
     final String? language = response['language'] is String
         ? boundedString(response['language'], 40)
         : null;
-    final bool? requireTorrent = response['requireTorrent'] as bool?;
-    final int? minimumRating = (response['minimumRating'] as num?)?.toInt();
-    final int? pageAtLeast = (response['pageAtLeast'] as num?)?.toInt();
-    final int? pageAtMost = (response['pageAtMost'] as num?)?.toInt();
+    final bool? requireTorrent = asBool(response['requireTorrent']);
+    final int? minimumRating = asInt(response['minimumRating']);
+    final int? pageAtLeast = asInt(response['pageAtLeast']);
+    final int? pageAtMost = asInt(response['pageAtMost']);
     if ((minimumRating != null && (minimumRating < 1 || minimumRating > 5)) ||
         (pageAtLeast != null && pageAtLeast < 1) ||
         (pageAtMost != null && pageAtMost < 1) ||
@@ -489,6 +487,31 @@ class AiXpRemote {
     return strategy.keyword.trim().isNotEmpty ||
         validatedTags(strategy.tags, limit: _maxRemoteStrategyTags)
             .isNotEmpty;
+  }
+
+  /// Models sometimes emit numbers/booleans as strings; tolerate both instead of throwing.
+  static double? asDouble(Object? value) {
+    if (value is num) {
+      return value.toDouble();
+    }
+    return value is String ? double.tryParse(value.trim()) : null;
+  }
+
+  static int? asInt(Object? value) {
+    final double? number = asDouble(value);
+    return number == null || !number.isFinite ? null : number.toInt();
+  }
+
+  static bool? asBool(Object? value) {
+    if (value is bool) {
+      return value;
+    }
+    if (value is String) {
+      final String lower = value.trim().toLowerCase();
+      if (lower == 'true') return true;
+      if (lower == 'false') return false;
+    }
+    return null;
   }
 
   static String boundedString(Object? value, int maxLength) {

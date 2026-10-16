@@ -5,6 +5,23 @@
 /// Items with an empty normalized category or title are never treated as
 /// duplicates (and therefore never deleted).
 
+import 'package:dio/dio.dart';
+
+import '../exception/eh_site_exception.dart';
+
+/// Whether [e] means E-Hentai is throttling or has banned us, so a batch should stop
+/// instead of hammering the site with the remaining requests.
+bool isEHRateLimitError(Object e) {
+  if (e is EHSiteException) {
+    return e.type == EHSiteExceptionType.banned || e.type == EHSiteExceptionType.exceedLimit;
+  }
+  if (e is DioException) {
+    final int? status = e.response?.statusCode;
+    return status == 429 || status == 509;
+  }
+  return false;
+}
+
 /// Outcome after a batch torrent collection finishes (post-cancel checks).
 ///
 /// Stats mapping:
@@ -79,17 +96,20 @@ String? buildFavoriteDedupeKey({required String category, required String title}
 /// Return items that are duplicates of an earlier item in [items] (server order).
 ///
 /// The first occurrence of each key is kept; subsequent matches are returned
-/// as duplicates to delete. Items with empty normalized category or title are
+/// as duplicates to delete. When [priorityOf] is given, the item with the
+/// highest priority per key is kept instead (ties keep the earlier item). Items with empty normalized category or title are
 /// skipped entirely and never appear in the result.
 List<T> findFavoriteDuplicates<T>({
   required List<T> items,
   required String Function(T item) categoryOf,
   required String Function(T item) titleOf,
+  int Function(T item)? priorityOf,
 }) {
-  final Set<String> seenKeys = <String>{};
-  final List<T> duplicates = <T>[];
+  final Map<String, int> keptIndexByKey = <String, int>{};
+  final Set<int> duplicateIndexes = <int>{};
 
-  for (final T item in items) {
+  for (int i = 0; i < items.length; i++) {
+    final T item = items[i];
     final String? key = buildFavoriteDedupeKey(
       category: categoryOf(item),
       title: titleOf(item),
@@ -98,12 +118,21 @@ List<T> findFavoriteDuplicates<T>({
       // Empty category/title after normalization - never delete.
       continue;
     }
-    if (!seenKeys.add(key)) {
-      duplicates.add(item);
+    final int? keptIndex = keptIndexByKey[key];
+    if (keptIndex == null) {
+      keptIndexByKey[key] = i;
+    } else if (priorityOf != null && priorityOf(item) > priorityOf(items[keptIndex])) {
+      duplicateIndexes.add(keptIndex);
+      keptIndexByKey[key] = i;
+    } else {
+      duplicateIndexes.add(i);
     }
   }
 
-  return duplicates;
+  return <T>[
+    for (int i = 0; i < items.length; i++)
+      if (duplicateIndexes.contains(i)) items[i],
+  ];
 }
 
 /// Reconcile one gdata chunk: match response rows to [requested] by gid.
@@ -202,6 +231,7 @@ Future<void> runWithConcurrency<T>({
   required Future<void> Function(T item) action,
   required bool Function() isCancelled,
   int completedOffset = 0,
+  Duration interval = Duration.zero,
   void Function(int completed, int total)? onProgress,
 }) async {
   assert(completedOffset >= 0);
@@ -232,6 +262,10 @@ Future<void> runWithConcurrency<T>({
       } finally {
         completed++;
         onProgress?.call(completed, total);
+      }
+      // Per-worker pacing keeps batch traffic polite towards the site.
+      if (interval > Duration.zero && nextIndex < itemCount && !isCancelled()) {
+        await Future<void>.delayed(interval);
       }
     }
   }

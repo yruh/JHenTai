@@ -2,7 +2,9 @@ import 'package:flutter/material.dart';
 import 'package:get/get.dart';
 import 'package:jhentai/src/routes/routes.dart';
 import '../../setting/user_setting.dart';
+import '../../setting/style_setting.dart';
 import '../../utils/route_util.dart';
+import '../layout/mobile_v2/mobile_layout_page_v2_logic.dart';
 import '../layout/mobile_v2/notification/tap_menu_button_notification.dart';
 
 class SettingPage extends StatelessWidget {
@@ -53,7 +55,7 @@ class SettingPage extends StatelessWidget {
             ListTile(
               leading: const Icon(Icons.auto_awesome),
               title: Text('aiCenter'.tr),
-              onTap: () => toRoute(Routes.aiCenter),
+              onTap: _openAiCenter,
             ),
             ListTile(
               leading: const Icon(Icons.wifi),
@@ -99,5 +101,15 @@ class SettingPage extends StatelessWidget {
         ),
       ),
     );
+  }
+
+  /// In V2 layouts AI center is a drawer tab backed by a permanent logic; switching to that tab
+  /// instead of pushing a second page avoids attaching its ScrollControllers to two lists.
+  void _openAiCenter() {
+    if (styleSetting.isInV2Layout && Get.isRegistered<MobileLayoutPageV2Logic>()) {
+      Get.find<MobileLayoutPageV2Logic>().handleTapTabBarButtonByRouteName(Routes.aiCenter);
+      return;
+    }
+    toRoute(Routes.aiCenter);
   }
 }

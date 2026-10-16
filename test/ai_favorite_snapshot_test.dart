@@ -246,4 +246,23 @@ void main() {
       expect(r2.favoriteTagName, 'Keep');
     });
   });
+
+  test('fromJson skips corrupt entries and keeps valid ones', () {
+    final AiFavoriteSnapshot snapshot = AiFavoriteSnapshot.fromJson(<String, dynamic>{
+      'version': AiFavoriteSnapshot.currentVersion,
+      'ownerKey': 'owner',
+      'capturedAtMs': 1,
+      'entries': <dynamic>[
+        <String, dynamic>{'signal': null},
+        <String, dynamic>{'signal': <String, dynamic>{'title': 'missing gid'}},
+        <String, dynamic>{
+          'signal': <String, dynamic>{'gid': 7, 'title': 'ok'},
+          'token': 123,
+        },
+      ],
+    });
+    expect(snapshot.entries.length, 1);
+    expect(snapshot.entries.single.signal.gid, 7);
+    expect(snapshot.entries.single.token, '');
+  });
 }

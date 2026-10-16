@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'dart:math';
 
 import 'package:dio/dio.dart';
 import 'package:get/get_rx/src/rx_workers/rx_workers.dart';
@@ -8,6 +9,9 @@ import '../service/jh_service.dart';
 import '../setting/network_setting.dart';
 
 AIRequest aiRequest = AIRequest();
+
+/// LLM completions routinely take far longer than normal page requests.
+const int aiReceiveTimeoutMs = 120000;
 
 class AIRequest with JHLifeCircleBeanErrorCatch implements JHLifeCircleBean {
   late final Dio _dio;
@@ -62,11 +66,13 @@ class AIRequest with JHLifeCircleBeanErrorCatch implements JHLifeCircleBean {
     if (!aiSetting.isReady) {
       throw StateError('AI settings are incomplete');
     }
+    _ensureSecureEndpoint(aiSetting.endpoint.value);
 
     final Response response = await _dio.post(
       '${aiSetting.endpoint.value}/chat/completions',
       options: Options(
         contentType: Headers.jsonContentType,
+        receiveTimeout: Duration(milliseconds: max(networkSetting.receiveTimeout.value, aiReceiveTimeoutMs)),
         headers: {
           'Authorization': 'Bearer ${aiSetting.apiKey.value}',
         },
@@ -83,6 +89,18 @@ class AIRequest with JHLifeCircleBeanErrorCatch implements JHLifeCircleBean {
     );
 
     return _extractJsonObject(response.data);
+  }
+
+  /// Refuses to send the API key in plaintext unless the endpoint is a loopback address.
+  void _ensureSecureEndpoint(String endpoint) {
+    final Uri? uri = Uri.tryParse(endpoint);
+    if (uri == null || uri.scheme == 'https') {
+      return;
+    }
+    if (uri.scheme == 'http' && const {'localhost', '127.0.0.1', '::1'}.contains(uri.host)) {
+      return;
+    }
+    throw StateError('AI endpoint must use https');
   }
 
   Map<String, dynamic> _extractJsonObject(dynamic responseData) {

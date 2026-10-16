@@ -41,6 +41,8 @@ class FavoritePageLogic extends BasePageLogic {
   static const int _maxFavoritePages = 200;
   static const int _torrentFetchConcurrency = 3;
   static const int _deleteConcurrency = 3;
+  static const Duration _batchRequestInterval = Duration(milliseconds: 300);
+  static const int _dedupePreviewLimit = 10;
 
   /// GetBuilder id for the batch overflow menu / progress indicator.
   final String batchOperationId = 'batchOperationId';
@@ -174,9 +176,15 @@ class FavoritePageLogic extends BasePageLogic {
         } on DioException catch (e) {
           failureCount += chunk.length;
           log.error('batch check favorite torrents metadata fail', e.errorMsg);
+          if (isEHRateLimitError(e)) {
+            rethrow;
+          }
         } on EHSiteException catch (e) {
           failureCount += chunk.length;
           log.error('batch check favorite torrents metadata fail', e.message);
+          if (isEHRateLimitError(e)) {
+            rethrow;
+          }
         } catch (e) {
           failureCount += chunk.length;
           log.error('batch check favorite torrents metadata fail', e.toString());
@@ -197,11 +205,13 @@ class FavoritePageLogic extends BasePageLogic {
       final LinkedHashSet<String> magnets = LinkedHashSet<String>();
       // Galleries that contributed at least one non-outdated magnet (copied set size basis).
       int galleryWithMagnetCount = 0;
+      bool rateLimited = false;
 
       await runWithConcurrency<Gallery>(
         items: withTorrents,
         concurrency: _torrentFetchConcurrency,
-        isCancelled: () => progress.isCancelled,
+        interval: _batchRequestInterval,
+        isCancelled: () => progress.isCancelled || rateLimited,
         onProgress: (int completed, int total) {
           progress.setProgress(current: completed, total: total);
         },
@@ -221,9 +231,11 @@ class FavoritePageLogic extends BasePageLogic {
             }
           } on DioException catch (e) {
             failureCount++;
+            rateLimited = rateLimited || isEHRateLimitError(e);
             log.error('batch fetch favorite torrent page fail gid=${gallery.gid}', e.errorMsg);
           } on EHSiteException catch (e) {
             failureCount++;
+            rateLimited = rateLimited || isEHRateLimitError(e);
             log.error('batch fetch favorite torrent page fail gid=${gallery.gid}', e.message);
           } catch (e) {
             failureCount++;
@@ -293,7 +305,7 @@ class FavoritePageLogic extends BasePageLogic {
   }
 
   /// Deduplicate server favorites by category + case/whitespace-normalized title.
-  /// Keeps the first item in server order; skips empty category/title (never deletes them).
+  /// Keeps the newest (highest gid) item; skips empty category/title (never deletes them).
   Future<void> handleDeduplicateFavorites() async {
     if (state.batchOperationRunning) {
       return;
@@ -326,6 +338,8 @@ class FavoritePageLogic extends BasePageLogic {
         items: favorites,
         categoryOf: (Gallery g) => g.category,
         titleOf: (Gallery g) => g.title,
+        // Higher gid = newer upload; keep the newest version of each title.
+        priorityOf: (Gallery g) => g.gid,
       );
 
       // Close progress before confirmation so the user can interact freely.
@@ -339,9 +353,15 @@ class FavoritePageLogic extends BasePageLogic {
       final bool? confirmed = await Get.dialog<bool>(
         EHDialog(
           title: 'confirmDeduplicateFavorites'.tr,
-          content: 'confirmDeduplicateFavoritesContent'.trParams({
-            'duplicateCount': duplicates.length.toString(),
-          }),
+          content: [
+            'confirmDeduplicateFavoritesContent'.trParams({
+              'duplicateCount': duplicates.length.toString(),
+            }),
+            '',
+            ...duplicates.take(_dedupePreviewLimit).map((Gallery g) => '• ${g.title}'),
+            if (duplicates.length > _dedupePreviewLimit) '…',
+          ].join('
+'),
         ),
       );
       if (confirmed != true) {
@@ -362,11 +382,13 @@ class FavoritePageLogic extends BasePageLogic {
 
       int deletedCount = 0;
       int failureCount = 0;
+      bool rateLimited = false;
 
       await runWithConcurrency<Gallery>(
         items: duplicates,
         concurrency: _deleteConcurrency,
-        isCancelled: () => progress.isCancelled,
+        interval: _batchRequestInterval,
+        isCancelled: () => progress.isCancelled || rateLimited,
         onProgress: (int completed, int total) {
           progress.setProgress(current: completed, total: total);
         },
@@ -376,9 +398,11 @@ class FavoritePageLogic extends BasePageLogic {
             deletedCount++;
           } on DioException catch (e) {
             failureCount++;
+            rateLimited = rateLimited || isEHRateLimitError(e);
             log.error('dedupe remove favorite fail gid=${gallery.gid}', e.errorMsg);
           } on EHSiteException catch (e) {
             failureCount++;
+            rateLimited = rateLimited || isEHRateLimitError(e);
             log.error('dedupe remove favorite fail gid=${gallery.gid}', e.message);
           } catch (e) {
             failureCount++;

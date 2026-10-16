@@ -682,6 +682,18 @@ unknown -> missing
       expect(intent.xpPreference!.toLowerCase(), contains('fox'));
     });
 
+    test('min pages with colon is not mistaken for max pages', () {
+      final AiXpSearchIntent intent = engine.parseSearchIntent('min pages: 20 max pages: 80');
+      expect(intent.pageAtLeast, 20);
+      expect(intent.pageAtMost, 80);
+    });
+
+    test('pages=N is a lower bound and pages<N an upper bound', () {
+      expect(engine.parseSearchIntent('pages=20').pageAtLeast, 20);
+      expect(engine.parseSearchIntent('pages=20').pageAtMost, isNull);
+      expect(engine.parseSearchIntent('pages<50').pageAtMost, 50);
+    });
+
     test('without-torrent wins over with-torrent when both present', () {
       final AiXpSearchIntent intent = engine.parseSearchIntent(
         'with torrent 无种子',

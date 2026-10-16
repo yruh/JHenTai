@@ -137,6 +137,8 @@ class AiCenterPage extends StatelessWidget {
       controller: controller,
       child: ListView(
         controller: controller,
+        // Keep pull-to-refresh usable when content is shorter than the viewport.
+        physics: const AlwaysScrollableScrollPhysics(),
         padding: const EdgeInsets.fromLTRB(12, 12, 12, 24),
         children: [
           Center(
@@ -259,7 +261,8 @@ class AiCenterPage extends StatelessWidget {
         final bool aiReady = logic.isAiReady;
         return _constrainedScroll(
           controller: logic.profileScrollController,
-          onRefresh: aiReady ? logic.refreshProfile : null,
+          // Pull only reloads the saved profile; a full re-analysis stays behind the explicit button.
+          onRefresh: logic.loadProfile,
           children: [
             _sectionCard(
               context: context,
@@ -304,7 +307,7 @@ class AiCenterPage extends StatelessWidget {
         context,
         'aiOperationFailed'.tr,
         onAction: logic.loadProfile,
-        actionLabel: 'OK'.tr,
+        actionLabel: 'reload'.tr,
       );
     }
 
